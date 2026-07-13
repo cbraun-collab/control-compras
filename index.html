@@ -37,6 +37,7 @@
 <body>
 
 <div id="loginScreen">
+  <img src="logo.png" alt="SENERCOM" style="height:70px; width:auto; margin-bottom:16px;">
   <h2 style="color:var(--teal)">Control Compras SENERCOM</h2>
   <p>Inicia sesión con tu cuenta @senercom.cl para continuar.</p>
   <button class="primary" onclick="iniciarSesion()">Iniciar sesión con Google</button>
@@ -44,7 +45,10 @@
 
 <div id="appScreen" class="hidden">
   <header>
-    <h1>Control Compras SENERCOM</h1>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <img src="logo.png" alt="SENERCOM" style="height:28px; width:auto; flex-shrink:0;">
+      <h1>Control Compras SENERCOM</h1>
+    </div>
     <span id="userBadge"></span>
   </header>
 
@@ -86,18 +90,20 @@
     <section id="view-comparativo" class="view hidden">
       <div class="card">
         <h3>Comparativo de Proveedores</h3>
-        <label>N° Requisición</label>
-        <input id="comp-nreq" placeholder="Ej: REQ-0001">
+        <label>Selecciona la Requisición</label>
+        <select id="comp-select-req" onchange="cargarRequisicionEnComparativo()">
+          <option value="">-- Elige una requisición pendiente --</option>
+        </select>
+        <div id="comp-info-req" style="font-size:12px; color:#777; margin-top:6px;"></div>
 
-        <h4 style="margin-top:16px;">Cotizaciones</h4>
+        <h4 style="margin-top:16px;">Cotizaciones por ítem</h4>
         <div id="comp-items"></div>
-        <button class="secondary" onclick="agregarFilaCotizacion()">+ Agregar cotización</button>
-        <br>
-        <button class="primary" onclick="enviarComparativo()">Guardar Comparativo</button>
         <p style="font-size:11px; color:#777; margin-top:8px;">
-          Mínimo 1 proveedor; no es obligatorio llegar a 3. Marca "Ganador" en cada línea elegida
-          (pueden ganar distintos proveedores en la misma requisición).
+          Agrega una fila por cada cotización de proveedor para cada ítem de la requisición.
+          El sistema marca el <b>ganador automáticamente por menor precio</b>; puedes cambiarlo
+          manualmente marcando otro antes de guardar.
         </p>
+        <button class="primary" onclick="enviarComparativo()">Guardar Comparativo</button>
       </div>
     </section>
 
@@ -105,25 +111,28 @@
     <section id="view-oc" class="view hidden">
       <div class="card">
         <h3>Emitir Orden de Compra</h3>
-        <label>N° Requisición de origen</label>
-        <input id="oc-nreq">
-        <label>Centro de Costo</label>
-        <input id="oc-cc">
-        <label>Obra</label>
-        <input id="oc-obra">
-        <label>Fecha entrega requerida</label>
-        <input id="oc-fecha" type="date">
-        <label>Criticidad</label>
-        <select id="oc-criticidad"><option>Alta</option><option selected>Media</option><option>Baja</option></select>
+        <label>Selecciona la Requisición (ya con comparativo guardado)</label>
+        <select id="oc-select-req" onchange="cargarRequisicionEnOC()">
+          <option value="">-- Elige una requisición en cotización --</option>
+        </select>
+
+        <label>Centro de Costo <span style="font-weight:normal;color:#777;">(heredado)</span></label>
+        <input id="oc-cc" readonly style="background:#f0f0f0;">
+        <label>Obra <span style="font-weight:normal;color:#777;">(heredado)</span></label>
+        <input id="oc-obra" readonly style="background:#f0f0f0;">
+        <label>Fecha entrega requerida <span style="font-weight:normal;color:#777;">(heredado)</span></label>
+        <input id="oc-fecha" readonly style="background:#f0f0f0;">
+        <label>Fecha entrega ofrecida por el proveedor</label>
+        <input id="oc-fecha-proveedor" type="date">
+        <label>Criticidad <span style="font-weight:normal;color:#777;">(heredado)</span></label>
+        <input id="oc-criticidad" readonly style="background:#f0f0f0;">
         <label>Condición de pago</label>
         <input id="oc-condpago" placeholder="Ej: 30 días">
         <label>Flete (opcional)</label>
         <input id="oc-flete" type="number" value="0">
 
-        <h4 style="margin-top:16px;">Ítems ganadores (de todos los proveedores ganadores del comparativo)</h4>
+        <h4 style="margin-top:16px;">Ítems ganadores <span style="font-weight:normal;color:#777;">(cargados automáticamente del Comparativo)</span></h4>
         <div id="oc-items"></div>
-        <button class="secondary" onclick="agregarFilaItemOC()">+ Agregar ítem</button>
-        <br>
         <button class="primary" onclick="enviarOC()">Autorizar y Emitir OC</button>
         <p style="font-size:11px; color:#777; margin-top:8px;">
           Si hay ítems de distintos proveedores, el sistema genera automáticamente una OC
@@ -264,19 +273,70 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     if (btn.dataset.view === 'seguimiento') {
       cargarRequisiciones(); cargarOC(); cargarStockCritico(); cargarPresupuesto();
     }
+    if (btn.dataset.view === 'comparativo') {
+      poblarSelectorRequisicionesComparativo();
+    }
+    if (btn.dataset.view === 'oc') {
+      poblarSelectorRequisicionesOC();
+    }
   });
 });
 
-/* ---------------- Ítems dinámicos: Requisición ---------------- */
+/* ---------------- Ítems dinámicos: Requisición (con buscador de Inventario) ---------------- */
+let reqItemCounter = 0;
+
 function agregarFilaItemRequisicion() {
+  const id = 'reqItem' + (reqItemCounter++);
   const div = document.createElement('div');
   div.className = 'itemRow';
+  div.style.flexWrap = 'wrap';
+  div.style.position = 'relative';
   div.innerHTML = `
-    <input placeholder="Código" class="req-item-codigo">
-    <input placeholder="Descripción" class="req-item-desc">
+    <div style="flex:2; position:relative;">
+      <input placeholder="Buscar por código o descripción..." class="req-item-buscador" data-id="${id}" autocomplete="off">
+      <div class="sugerencias" id="sug-${id}" style="display:none; position:absolute; background:white; border:1px solid #ccc; border-radius:4px; width:100%; max-height:180px; overflow-y:auto; z-index:50; box-shadow:0 2px 6px rgba(0,0,0,0.15);"></div>
+      <input type="hidden" class="req-item-codigo">
+      <input type="hidden" class="req-item-desc">
+      <input type="hidden" class="req-item-unidad">
+    </div>
     <input placeholder="Cant." type="number" class="req-item-cant" style="max-width:70px">
-    <input placeholder="Unidad" class="req-item-unidad" style="max-width:70px">`;
+    <span class="stock-info" style="font-size:11px; color:#777; align-self:center; min-width:90px;"></span>`;
   document.getElementById('req-items').appendChild(div);
+
+  const buscador = div.querySelector('.req-item-buscador');
+  const sugerenciasBox = div.querySelector(`#sug-${id}`);
+  let debounceTimer;
+
+  buscador.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const termino = buscador.value;
+    if (termino.length < 2) { sugerenciasBox.style.display = 'none'; return; }
+    debounceTimer = setTimeout(async () => {
+      const res = await callBackend('buscarArticulo', { termino });
+      if (!res.ok || !res.data.length) { sugerenciasBox.style.display = 'none'; return; }
+      sugerenciasBox.innerHTML = res.data.map(a => `
+        <div class="sugerencia-item" data-codigo="${a.codigo}" data-desc="${a.descripcion.replace(/"/g,'&quot;')}" data-unidad="${a.unidad}" data-stock="${a.stockActual}"
+             style="padding:8px; cursor:pointer; border-bottom:1px solid #eee; font-size:12px;">
+          <b>${a.codigo}</b> — ${a.descripcion}<br>
+          <span style="color:${Number(a.stockActual) > 0 ? '#27ae60' : '#c0392b'};">Stock actual: ${a.stockActual} ${a.unidad}</span>
+        </div>`).join('');
+      sugerenciasBox.style.display = 'block';
+      sugerenciasBox.querySelectorAll('.sugerencia-item').forEach(item => {
+        item.addEventListener('click', () => {
+          buscador.value = `${item.dataset.codigo} — ${item.dataset.desc}`;
+          div.querySelector('.req-item-codigo').value = item.dataset.codigo;
+          div.querySelector('.req-item-desc').value = item.dataset.desc;
+          div.querySelector('.req-item-unidad').value = item.dataset.unidad;
+          div.querySelector('.stock-info').textContent = `Stock: ${item.dataset.stock} ${item.dataset.unidad}`;
+          sugerenciasBox.style.display = 'none';
+        });
+      });
+    }, 300);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!div.contains(e.target)) sugerenciasBox.style.display = 'none';
+  });
 }
 agregarFilaItemRequisicion();
 
@@ -287,6 +347,8 @@ async function enviarRequisicion() {
     cantidad: row.querySelector('.req-item-cant').value,
     unidad: row.querySelector('.req-item-unidad').value
   })).filter(i => i.codigo);
+
+  if (!items.length) { toast('Busca y selecciona al menos un ítem del inventario.'); return; }
 
   const payload = {
     usuario: currentUser,
@@ -306,55 +368,149 @@ async function enviarRequisicion() {
   }
 }
 
-/* ---------------- Ítems dinámicos: Comparativo ---------------- */
-function agregarFilaCotizacion() {
+/* ---------------- Comparativo: selección de requisición + cotizaciones por ítem ---------------- */
+let comparativoItemsActuales = []; // items de la requisición seleccionada
+
+async function poblarSelectorRequisicionesComparativo() {
+  const res = await callBackend('listarRequisicionesAbiertas', { estado: 'PENDIENTE' });
+  const select = document.getElementById('comp-select-req');
+  const actual = select.value;
+  select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
+    (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
+  select.value = actual;
+}
+
+async function cargarRequisicionEnComparativo() {
+  const nReq = document.getElementById('comp-select-req').value;
+  const contenedor = document.getElementById('comp-items');
+  const info = document.getElementById('comp-info-req');
+  contenedor.innerHTML = '';
+  info.textContent = '';
+  comparativoItemsActuales = [];
+  if (!nReq) return;
+
+  const res = await callBackend('obtenerRequisicion', { nRequisicion: nReq });
+  if (!res.ok) { toast('Error: ' + res.error); return; }
+
+  info.textContent = `Centro de Costo: ${res.encabezado['Centro de Costo']} · Obra: ${res.encabezado['Obra']} · Criticidad: ${res.encabezado['Criticidad']}`;
+  comparativoItemsActuales = res.items;
+
+  res.items.forEach((item, idx) => {
+    const bloque = document.createElement('div');
+    bloque.style.border = '1px solid #eee';
+    bloque.style.borderRadius = '6px';
+    bloque.style.padding = '10px';
+    bloque.style.marginTop = '10px';
+    bloque.innerHTML = `
+      <div style="font-size:13px; font-weight:bold; color:var(--teal); margin-bottom:6px;">
+        ${item['Codigo Articulo']} — ${item['Descripcion']} (Cant: ${item['Cantidad']} ${item['Unidad']})
+      </div>
+      <div class="comp-proveedores-lista" data-codigo="${item['Codigo Articulo']}"></div>
+      <button class="secondary" onclick="agregarFilaCotizacion(this, '${item['Codigo Articulo']}')" type="button">+ Agregar cotización de proveedor</button>
+    `;
+    contenedor.appendChild(bloque);
+  });
+}
+
+function agregarFilaCotizacion(btn, codigo) {
+  const lista = btn.previousElementSibling;
   const div = document.createElement('div');
   div.className = 'itemRow';
   div.innerHTML = `
     <input placeholder="Proveedor" class="comp-proveedor">
-    <input placeholder="Código" class="comp-codigo" style="max-width:90px">
-    <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:100px">
-    <label style="display:flex;align-items:center;gap:4px;font-weight:normal;">
-      <input type="checkbox" class="comp-ganador" style="width:auto;margin:0;"> Ganador
-    </label>`;
-  document.getElementById('comp-items').appendChild(div);
+    <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:110px">
+    <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">`;
+  lista.appendChild(div);
 }
-agregarFilaCotizacion();
 
 async function enviarComparativo() {
-  const cotizaciones = [...document.querySelectorAll('#comp-items .itemRow')].map(row => ({
-    proveedor: row.querySelector('.comp-proveedor').value,
-    codigo: row.querySelector('.comp-codigo').value,
-    precioUnitario: row.querySelector('.comp-precio').value,
-    ganador: row.querySelector('.comp-ganador').checked
-  })).filter(c => c.proveedor);
+  const nReq = document.getElementById('comp-select-req').value;
+  if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
-  const payload = {
-    usuario: currentUser,
-    nRequisicion: document.getElementById('comp-nreq').value,
-    cotizaciones
-  };
+  const cotizaciones = [];
+  document.querySelectorAll('.comp-proveedores-lista').forEach(lista => {
+    const codigo = lista.dataset.codigo;
+    lista.querySelectorAll('.itemRow').forEach(row => {
+      const proveedor = row.querySelector('.comp-proveedor').value;
+      const precioUnitario = row.querySelector('.comp-precio').value;
+      const plazoEntrega = row.querySelector('.comp-plazo').value;
+      if (proveedor && precioUnitario) {
+        cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega });
+      }
+    });
+  });
 
-  const res = await callBackend('guardarComparativo', payload);
-  toast(res.ok ? 'Comparativo guardado' : 'Error: ' + res.error);
+  if (!cotizaciones.length) { toast('Agrega al menos una cotización.'); return; }
+
+  const res = await callBackend('guardarComparativo', { usuario: currentUser, nRequisicion: nReq, cotizaciones });
+  toast(res.ok ? 'Comparativo guardado. El ganador quedó marcado automáticamente por menor precio.' : 'Error: ' + res.error);
+  if (res.ok) {
+    poblarSelectorRequisicionesComparativo();
+    document.getElementById('comp-select-req').value = '';
+    cargarRequisicionEnComparativo();
+  }
 }
 
-/* ---------------- Ítems dinámicos: OC ---------------- */
-function agregarFilaItemOC() {
-  const div = document.createElement('div');
-  div.className = 'itemRow';
-  div.innerHTML = `
-    <input placeholder="Proveedor" class="oc-item-proveedor">
-    <input placeholder="Código" class="oc-item-codigo" style="max-width:80px">
-    <input placeholder="Descripción" class="oc-item-desc">
-    <input placeholder="Cant." type="number" class="oc-item-cant" style="max-width:60px">
-    <input placeholder="Unidad" class="oc-item-unidad" style="max-width:60px">
-    <input placeholder="Precio Unit." type="number" class="oc-item-precio" style="max-width:100px">`;
-  document.getElementById('oc-items').appendChild(div);
+/* ---------------- OC: selección de requisición, herencia de campos, ganadores automáticos ---------------- */
+async function poblarSelectorRequisicionesOC() {
+  const res = await callBackend('listarRequisicionesAbiertas', { estado: 'EN COTIZACION' });
+  const select = document.getElementById('oc-select-req');
+  const actual = select.value;
+  select.innerHTML = '<option value="">-- Elige una requisición en cotización --</option>' +
+    (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
+  select.value = actual;
 }
-agregarFilaItemOC();
+
+async function cargarRequisicionEnOC() {
+  const nReq = document.getElementById('oc-select-req').value;
+  const contenedor = document.getElementById('oc-items');
+  contenedor.innerHTML = '';
+  if (!nReq) {
+    document.getElementById('oc-cc').value = '';
+    document.getElementById('oc-obra').value = '';
+    document.getElementById('oc-fecha').value = '';
+    document.getElementById('oc-criticidad').value = '';
+    return;
+  }
+
+  const [reqRes, ganadoresRes] = await Promise.all([
+    callBackend('obtenerRequisicion', { nRequisicion: nReq }),
+    callBackend('obtenerGanadoresComparativo', { nRequisicion: nReq })
+  ]);
+
+  if (!reqRes.ok) { toast('Error: ' + reqRes.error); return; }
+
+  document.getElementById('oc-cc').value = reqRes.encabezado['Centro de Costo'] || '';
+  document.getElementById('oc-obra').value = reqRes.encabezado['Obra'] || '';
+  document.getElementById('oc-fecha').value = reqRes.encabezado['Fecha Necesaria'] || '';
+  document.getElementById('oc-criticidad').value = reqRes.encabezado['Criticidad'] || '';
+
+  const itemsPorCodigo = {};
+  (reqRes.items || []).forEach(it => itemsPorCodigo[it['Codigo Articulo']] = it);
+
+  (ganadoresRes.data || []).forEach(g => {
+    const detalle = itemsPorCodigo[g['Codigo Articulo']] || {};
+    const div = document.createElement('div');
+    div.className = 'itemRow';
+    div.innerHTML = `
+      <input value="${g['Proveedor']}" readonly style="background:#f0f0f0;" class="oc-item-proveedor">
+      <input value="${g['Codigo Articulo']}" readonly style="background:#f0f0f0; max-width:90px;" class="oc-item-codigo">
+      <input value="${detalle['Descripcion'] || ''}" readonly style="background:#f0f0f0;" class="oc-item-desc">
+      <input value="${detalle['Cantidad'] || ''}" class="oc-item-cant" style="max-width:60px">
+      <input value="${detalle['Unidad'] || ''}" readonly style="background:#f0f0f0; max-width:60px;" class="oc-item-unidad">
+      <input value="${g['Precio Unitario']}" readonly style="background:#f0f0f0; max-width:100px;" class="oc-item-precio">`;
+    contenedor.appendChild(div);
+  });
+
+  if (!(ganadoresRes.data || []).length) {
+    contenedor.innerHTML = '<p style="color:#c0392b; font-size:12px;">No hay ganadores guardados en el Comparativo para esta requisición todavía.</p>';
+  }
+}
 
 async function enviarOC() {
+  const nReq = document.getElementById('oc-select-req').value;
+  if (!nReq) { toast('Selecciona una requisición primero.'); return; }
+
   const itemsGanadores = [...document.querySelectorAll('#oc-items .itemRow')].map(row => ({
     proveedor: row.querySelector('.oc-item-proveedor').value,
     codigo: row.querySelector('.oc-item-codigo').value,
@@ -364,12 +520,15 @@ async function enviarOC() {
     precioUnitario: row.querySelector('.oc-item-precio').value
   })).filter(i => i.proveedor && i.codigo);
 
+  if (!itemsGanadores.length) { toast('No hay ítems ganadores cargados para emitir la OC.'); return; }
+
   const payload = {
     usuario: currentUser,
-    nRequisicion: document.getElementById('oc-nreq').value,
+    nRequisicion: nReq,
     centroCosto: document.getElementById('oc-cc').value,
     obra: document.getElementById('oc-obra').value,
     fechaEntrega: document.getElementById('oc-fecha').value,
+    fechaEntregaProveedor: document.getElementById('oc-fecha-proveedor').value,
     criticidad: document.getElementById('oc-criticidad').value,
     condicionPago: document.getElementById('oc-condpago').value,
     flete: document.getElementById('oc-flete').value,
@@ -383,6 +542,9 @@ async function enviarOC() {
       await callBackend('generarPDFOC', { nOC });
     }
     toast('PDF(s) generado(s) y guardado(s) en Drive.');
+    poblarSelectorRequisicionesOC();
+    document.getElementById('oc-select-req').value = '';
+    cargarRequisicionEnOC();
   } else {
     toast('Error: ' + res.error);
   }
