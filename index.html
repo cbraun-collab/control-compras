@@ -531,7 +531,11 @@ function agregarFilaCotizacion(btn, codigo) {
       <a href="#" class="comp-nuevo-proveedor-link" style="font-size:11px; display:none;">+ Agregar "<span></span>" como proveedor nuevo</a>
     </div>
     <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:110px">
-    <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">`;
+    <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">
+    <label class="secondary" style="display:flex; align-items:center; justify-content:center; max-width:36px; padding:8px; cursor:pointer; margin:0;" title="Adjuntar cotización (PDF, imagen, Word, Excel)">
+      📎<input type="file" class="comp-archivo-cotizacion" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" style="display:none;">
+    </label>
+    <span class="comp-archivo-estado" style="font-size:10px; color:#777; align-self:center;"></span>`;
   lista.appendChild(div);
 
   const buscador = div.querySelector('.comp-proveedor-buscador');
@@ -599,6 +603,47 @@ function agregarFilaCotizacion(btn, codigo) {
   document.addEventListener('click', (e) => {
     if (!div.contains(e.target)) sugerenciasBox.style.display = 'none';
   });
+
+  const inputArchivo = div.querySelector('.comp-archivo-cotizacion');
+  const estadoArchivo = div.querySelector('.comp-archivo-estado');
+  inputArchivo.addEventListener('change', async () => {
+    const archivo = inputArchivo.files[0];
+    if (!archivo) return;
+    const nReqActual = document.getElementById('comp-select-req').value;
+    if (!nReqActual) { toast('Selecciona una requisición primero.'); inputArchivo.value = ''; return; }
+
+    estadoArchivo.textContent = 'Subiendo...';
+    const base64Content = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(archivo);
+    });
+
+    const subida = await callBackend('subirCotizacion', {
+      nRequisicion: nReqActual, nombreArchivo: archivo.name,
+      mimeType: archivo.type, base64Content
+    });
+    if (!subida.ok) { toast('Error al subir: ' + subida.error); estadoArchivo.textContent = ''; return; }
+    div.dataset.respaldoLink = subida.link;
+    estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · Leyendo con IA...`;
+
+    // Extracción automática — solo propone, el usuario siempre confirma/edita antes de guardar
+    if (archivo.type === 'application/pdf' || archivo.type.startsWith('image/')) {
+      const extraccion = await callBackend('extraerDatosCotizacion', { base64Content, mimeType: archivo.type });
+      if (extraccion.ok) {
+        const d = extraccion.datos;
+        if (d.proveedor) { buscador.value = d.proveedor; div.querySelector('.comp-proveedor').value = d.proveedor; }
+        if (d.precioUnitario) div.querySelector('.comp-precio').value = d.precioUnitario;
+        if (d.plazoEntrega) div.querySelector('.comp-plazo').value = d.plazoEntrega;
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>`;
+      } else {
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente`;
+      }
+    } else {
+      estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> guardado — completa los datos manualmente`;
+    }
+  });
 }
 
 async function enviarComparativo() {
@@ -614,8 +659,9 @@ async function enviarComparativo() {
       const proveedor = row.querySelector('.comp-proveedor').value;
       const precioUnitario = row.querySelector('.comp-precio').value;
       const plazoEntrega = row.querySelector('.comp-plazo').value;
+      const respaldoLink = row.dataset.respaldoLink || '';
       if (proveedor && precioUnitario) {
-        cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega });
+        cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega, respaldoLink });
       }
     });
   });
