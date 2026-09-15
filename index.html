@@ -37,7 +37,7 @@
 <body>
 
 <div id="loginScreen">
-  <img src="logo.png" alt="SENERCOM" style="height:70px; width:auto; margin-bottom:16px;">
+  <img src="logo.png" alt="SENERCOM" style="height:150px; width:auto; margin-bottom:16px;">
   <h2 style="color:var(--teal)">Control Compras SENERCOM</h2>
   <p>Inicia sesión con tu cuenta @senercom.cl para continuar.</p>
   <button class="primary" onclick="iniciarSesion()">Iniciar sesión con Google</button>
@@ -46,7 +46,9 @@
 <div id="appScreen" class="hidden">
   <header>
     <div style="display:flex; align-items:center; gap:10px;">
-      <img src="logo.png" alt="SENERCOM" style="height:28px; width:auto; flex-shrink:0;">
+      <div style="background:white; border-radius:6px; padding:4px 8px; display:flex; align-items:center;">
+        <img src="logo.png" alt="SENERCOM" style="height:36px; width:auto; flex-shrink:0;">
+      </div>
       <h1>Control Compras SENERCOM</h1>
     </div>
     <span id="userBadge"></span>
@@ -84,6 +86,16 @@
         <br>
         <button class="primary" onclick="enviarRequisicion()">Crear Requisición</button>
       </div>
+
+      <div class="card" id="req-panel-validacion" style="display:none; border:2px solid var(--orange);">
+        <h3>Borrador creado — revisar y validar</h3>
+        <p id="req-resumen-borrador" style="font-size:13px; color:#555;"></p>
+        <p style="font-size:12px; color:#777;">
+          Revisa que los datos estén correctos. Al validar, la requisición queda activa
+          y se envía por correo a Bodega/Logística para revisar disponibilidad.
+        </p>
+        <button class="primary" onclick="validarRequisicionActual()">Validar y enviar</button>
+      </div>
     </section>
 
     <!-- ===================== VISTA: COMPARATIVO ===================== -->
@@ -115,6 +127,10 @@
         <select id="oc-select-req" onchange="cargarRequisicionEnOC()">
           <option value="">-- Elige una requisición en cotización --</option>
         </select>
+        <p id="oc-aviso-vacio" style="display:none; font-size:12px; color:#c0392b; margin-top:6px;">
+          No hay requisiciones con Comparativo guardado todavía. Primero guarda un Comparativo
+          en la pestaña anterior para que aparezca aquí.
+        </p>
 
         <label>Centro de Costo <span style="font-weight:normal;color:#777;">(heredado)</span></label>
         <input id="oc-cc" readonly style="background:#f0f0f0;">
@@ -340,6 +356,8 @@ function agregarFilaItemRequisicion() {
 }
 agregarFilaItemRequisicion();
 
+let nReqBorradorActual = null;
+
 async function enviarRequisicion() {
   const items = [...document.querySelectorAll('#req-items .itemRow')].map(row => ({
     codigo: row.querySelector('.req-item-codigo').value,
@@ -362,9 +380,35 @@ async function enviarRequisicion() {
 
   const res = await callBackend('crearRequisicion', payload);
   if (res.ok) {
-    toast('Requisición creada: ' + res.nRequisicion);
+    nReqBorradorActual = res.nRequisicion;
+    toast('Borrador creado: ' + res.nRequisicion);
+    document.getElementById('req-resumen-borrador').textContent =
+      `${res.nRequisicion} — ${payload.centroCosto} / ${payload.obra} — ${items.length} ítem(s), criticidad ${payload.criticidad}`;
+    document.getElementById('req-panel-validacion').style.display = 'block';
   } else {
     toast('Error: ' + res.error);
+  }
+}
+
+async function validarRequisicionActual() {
+  if (!nReqBorradorActual) { toast('No hay borrador para validar.'); return; }
+  const res = await callBackend('validarRequisicion', { nRequisicion: nReqBorradorActual, usuario: currentUser });
+  if (res.ok) {
+    if (res.folioCorregido) {
+      toast(`Folio corregido por duplicidad — quedó como ${res.nRequisicion}, validada y enviada.`);
+    } else {
+      toast(`Requisición ${res.nRequisicion} validada y enviada a Bodega/Logística.`);
+    }
+    document.getElementById('req-panel-validacion').style.display = 'none';
+    nReqBorradorActual = null;
+    // Limpia el formulario para la siguiente requisición
+    document.getElementById('req-cc').value = '';
+    document.getElementById('req-obra').value = '';
+    document.getElementById('req-comentario').value = '';
+    document.getElementById('req-items').innerHTML = '';
+    agregarFilaItemRequisicion();
+  } else {
+    toast('Error al validar: ' + res.error);
   }
 }
 
@@ -412,15 +456,91 @@ async function cargarRequisicionEnComparativo() {
   });
 }
 
+let cotizacionCounter = 0;
+
 function agregarFilaCotizacion(btn, codigo) {
   const lista = btn.previousElementSibling;
+  const id = 'cot' + (cotizacionCounter++);
   const div = document.createElement('div');
   div.className = 'itemRow';
+  div.style.flexWrap = 'wrap';
+  div.style.position = 'relative';
   div.innerHTML = `
-    <input placeholder="Proveedor" class="comp-proveedor">
+    <div style="flex:1.5; position:relative;">
+      <input placeholder="Buscar proveedor..." class="comp-proveedor-buscador" data-id="${id}" autocomplete="off">
+      <div class="sugerencias" id="sugprov-${id}" style="display:none; position:absolute; background:white; border:1px solid #ccc; border-radius:4px; width:100%; max-height:180px; overflow-y:auto; z-index:50; box-shadow:0 2px 6px rgba(0,0,0,0.15);"></div>
+      <input type="hidden" class="comp-proveedor">
+      <a href="#" class="comp-nuevo-proveedor-link" style="font-size:11px; display:none;">+ Agregar "<span></span>" como proveedor nuevo</a>
+    </div>
     <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:110px">
     <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">`;
   lista.appendChild(div);
+
+  const buscador = div.querySelector('.comp-proveedor-buscador');
+  const sugerenciasBox = div.querySelector(`#sugprov-${id}`);
+  const linkNuevo = div.querySelector('.comp-nuevo-proveedor-link');
+  let debounceTimer;
+
+  buscador.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const termino = buscador.value;
+    div.querySelector('.comp-proveedor').value = ''; // se limpia hasta elegir de la lista
+    linkNuevo.style.display = 'none';
+    if (termino.length < 2) { sugerenciasBox.style.display = 'none'; return; }
+    debounceTimer = setTimeout(async () => {
+      const res = await callBackend('buscarProveedor', { termino });
+      if (res.ok && res.data.length) {
+        sugerenciasBox.innerHTML = res.data.map(p => `
+          <div class="sugerencia-item" data-nombre="${p['Nombre Proveedor']}" data-rut="${p['RUT']||''}"
+               data-direccion="${(p['Direccion']||'').replace(/"/g,'&quot;')}" data-telefono="${p['Telefono Empresa']||''}"
+               data-vendedor="${(p['Nombre Vendedor']||'').replace(/"/g,'&quot;')}" data-correovendedor="${p['Correo Vendedor']||''}" data-telefonovendedor="${p['Telefono Vendedor']||''}"
+               style="padding:8px; cursor:pointer; border-bottom:1px solid #eee; font-size:12px;">
+            <b>${p['Nombre Proveedor']}</b> ${p['RUT'] ? '(' + p['RUT'] + ')' : ''}<br>
+            <span style="color:#777;">Vendedor: ${p['Nombre Vendedor'] || '-'}</span>
+          </div>`).join('');
+        sugerenciasBox.style.display = 'block';
+        sugerenciasBox.querySelectorAll('.sugerencia-item').forEach(item => {
+          item.addEventListener('click', () => {
+            buscador.value = item.dataset.nombre + (item.dataset.rut ? ` (${item.dataset.rut})` : '');
+            div.querySelector('.comp-proveedor').value = item.dataset.nombre;
+            div.dataset.rut = item.dataset.rut;
+            div.dataset.direccion = item.dataset.direccion;
+            div.dataset.telefonoEmpresa = item.dataset.telefono;
+            div.dataset.nombreVendedor = item.dataset.vendedor;
+            div.dataset.correoVendedor = item.dataset.correovendedor;
+            div.dataset.telefonoVendedor = item.dataset.telefonovendedor;
+            sugerenciasBox.style.display = 'none';
+          });
+        });
+      } else {
+        sugerenciasBox.style.display = 'none';
+        linkNuevo.style.display = 'inline';
+        linkNuevo.querySelector('span').textContent = termino;
+      }
+    }, 300);
+  });
+
+  linkNuevo.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const nombre = buscador.value;
+    const rut = prompt(`RUT de "${nombre}" (opcional):`, '') || '';
+    const direccion = prompt('Dirección (opcional):', '') || '';
+    const telefonoEmpresa = prompt('Teléfono empresa (opcional):', '') || '';
+    const nombreVendedor = prompt('Nombre del vendedor de contacto (opcional):', '') || '';
+    const correoVendedor = prompt('Correo del vendedor (opcional):', '') || '';
+    const telefonoVendedor = prompt('Teléfono del vendedor (opcional):', '') || '';
+
+    await callBackend('guardarProveedor', { nombreProveedor: nombre, rut, direccion, telefonoEmpresa, nombreVendedor, correoVendedor, telefonoVendedor });
+    div.querySelector('.comp-proveedor').value = nombre;
+    div.dataset.rut = rut; div.dataset.direccion = direccion; div.dataset.telefonoEmpresa = telefonoEmpresa;
+    div.dataset.nombreVendedor = nombreVendedor; div.dataset.correoVendedor = correoVendedor; div.dataset.telefonoVendedor = telefonoVendedor;
+    linkNuevo.style.display = 'none';
+    toast('Proveedor guardado para futuras búsquedas.');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!div.contains(e.target)) sugerenciasBox.style.display = 'none';
+  });
 }
 
 async function enviarComparativo() {
@@ -452,19 +572,62 @@ async function enviarComparativo() {
 }
 
 /* ---------------- OC: selección de requisición, herencia de campos, ganadores automáticos ---------------- */
+let proveedoresDetalleActuales = {}; // { nombreProveedor: {rut, direccion, telefonoEmpresa, nombreVendedor, correoVendedor, telefonoVendedor} }
+
 async function poblarSelectorRequisicionesOC() {
   const res = await callBackend('listarRequisicionesAbiertas', { estado: 'EN COTIZACION' });
   const select = document.getElementById('oc-select-req');
   const actual = select.value;
+  const opciones = (res.data || []);
   select.innerHTML = '<option value="">-- Elige una requisición en cotización --</option>' +
-    (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
+    opciones.map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
+  const aviso = document.getElementById('oc-aviso-vacio');
+  if (aviso) aviso.style.display = opciones.length ? 'none' : 'block';
+}
+
+async function cargarDatosProveedorOC(nombreProveedor, contenedor) {
+  const res = await callBackend('buscarProveedor', { termino: nombreProveedor });
+  const coincidencias = (res.data || []).filter(p => p['Nombre Proveedor'] === nombreProveedor);
+
+  const bloque = document.createElement('div');
+  bloque.style.border = '1px solid #eee';
+  bloque.style.borderRadius = '6px';
+  bloque.style.padding = '10px';
+  bloque.style.marginBottom = '10px';
+  bloque.style.background = '#fafafa';
+
+  if (coincidencias.length === 0) {
+    bloque.innerHTML = `<b style="color:var(--teal);">${nombreProveedor}</b><p style="font-size:11px; color:#c0392b;">Sin datos de contacto guardados para este proveedor todavía. La OC se emitirá sin RUT/vendedor asignado.</p>`;
+    proveedoresDetalleActuales[nombreProveedor] = {};
+  } else {
+    const opciones = coincidencias.map((p, i) =>
+      `<option value="${i}">${p['Nombre Vendedor'] || 'Sin vendedor'} — ${p['RUT'] || 'sin RUT'}</option>`).join('');
+    bloque.innerHTML = `
+      <b style="color:var(--teal);">${nombreProveedor}</b>
+      <label style="margin-top:4px;">Contacto a usar en esta OC</label>
+      <select class="oc-select-vendedor">${opciones}</select>`;
+    proveedoresDetalleActuales[nombreProveedor] = {
+      rut: coincidencias[0]['RUT'] || '', direccion: coincidencias[0]['Direccion'] || '',
+      telefonoEmpresa: coincidencias[0]['Telefono Empresa'] || '', nombreVendedor: coincidencias[0]['Nombre Vendedor'] || '',
+      correoVendedor: coincidencias[0]['Correo Vendedor'] || '', telefonoVendedor: coincidencias[0]['Telefono Vendedor'] || ''
+    };
+    bloque.querySelector('.oc-select-vendedor').addEventListener('change', (e) => {
+      const elegido = coincidencias[e.target.value];
+      proveedoresDetalleActuales[nombreProveedor] = {
+        rut: elegido['RUT'] || '', direccion: elegido['Direccion'] || '', telefonoEmpresa: elegido['Telefono Empresa'] || '',
+        nombreVendedor: elegido['Nombre Vendedor'] || '', correoVendedor: elegido['Correo Vendedor'] || '', telefonoVendedor: elegido['Telefono Vendedor'] || ''
+      };
+    });
+  }
+  contenedor.appendChild(bloque);
 }
 
 async function cargarRequisicionEnOC() {
   const nReq = document.getElementById('oc-select-req').value;
   const contenedor = document.getElementById('oc-items');
   contenedor.innerHTML = '';
+  proveedoresDetalleActuales = {};
   if (!nReq) {
     document.getElementById('oc-cc').value = '';
     document.getElementById('oc-obra').value = '';
@@ -488,7 +651,20 @@ async function cargarRequisicionEnOC() {
   const itemsPorCodigo = {};
   (reqRes.items || []).forEach(it => itemsPorCodigo[it['Codigo Articulo']] = it);
 
-  (ganadoresRes.data || []).forEach(g => {
+  const ganadores = ganadoresRes.data || [];
+  if (!ganadores.length) {
+    contenedor.innerHTML = '<p style="color:#c0392b; font-size:12px;">No hay ganadores guardados en el Comparativo para esta requisición todavía.</p>';
+    return;
+  }
+
+  // Un bloque de datos de contacto por cada proveedor distinto entre los ganadores
+  const proveedoresUnicos = [...new Set(ganadores.map(g => g['Proveedor']))];
+  for (const prov of proveedoresUnicos) {
+    await cargarDatosProveedorOC(prov, contenedor);
+  }
+
+  const tabla = document.createElement('div');
+  ganadores.forEach(g => {
     const detalle = itemsPorCodigo[g['Codigo Articulo']] || {};
     const div = document.createElement('div');
     div.className = 'itemRow';
@@ -499,12 +675,9 @@ async function cargarRequisicionEnOC() {
       <input value="${detalle['Cantidad'] || ''}" class="oc-item-cant" style="max-width:60px">
       <input value="${detalle['Unidad'] || ''}" readonly style="background:#f0f0f0; max-width:60px;" class="oc-item-unidad">
       <input value="${g['Precio Unitario']}" readonly style="background:#f0f0f0; max-width:100px;" class="oc-item-precio">`;
-    contenedor.appendChild(div);
+    tabla.appendChild(div);
   });
-
-  if (!(ganadoresRes.data || []).length) {
-    contenedor.innerHTML = '<p style="color:#c0392b; font-size:12px;">No hay ganadores guardados en el Comparativo para esta requisición todavía.</p>';
-  }
+  contenedor.appendChild(tabla);
 }
 
 async function enviarOC() {
@@ -532,7 +705,8 @@ async function enviarOC() {
     criticidad: document.getElementById('oc-criticidad').value,
     condicionPago: document.getElementById('oc-condpago').value,
     flete: document.getElementById('oc-flete').value,
-    itemsGanadores
+    itemsGanadores,
+    proveedoresDetalle: proveedoresDetalleActuales
   };
 
   const res = await callBackend('emitirOC', payload);
