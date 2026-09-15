@@ -85,7 +85,7 @@
         <div id="req-items"></div>
         <button class="secondary" onclick="agregarFilaItemRequisicion()">+ Agregar ítem</button>
         <br>
-        <button class="primary" onclick="enviarRequisicion()">Crear Requisición</button>
+        <button class="primary" id="btn-crear-requisicion" onclick="enviarRequisicion()">Crear Requisición</button>
       </div>
 
       <div class="card" id="req-panel-validacion" style="display:none; border:2px solid var(--orange);">
@@ -99,7 +99,7 @@
           Revisa que los datos estén correctos. Al validar, la requisición queda activa
           y se envía por correo a Bodega/Logística para revisar disponibilidad.
         </p>
-        <button class="primary" onclick="validarRequisicionActual()">Validar y enviar</button>
+        <button class="primary" id="btn-validar-req" onclick="validarRequisicionActual()">Validar y enviar</button>
       </div>
     </section>
 
@@ -122,7 +122,7 @@
           rebaja automáticamente del Inventario Bodega. Lo no cubierto queda pendiente
           de cotizar en la pestaña Comparativo.
         </p>
-        <button class="primary" onclick="enviarRevisionDisponibilidad()">Guardar revisión</button>
+        <button class="primary" id="btn-guardar-disponibilidad" onclick="enviarRevisionDisponibilidad()">Guardar revisión</button>
       </div>
     </section>
 
@@ -143,7 +143,7 @@
           El sistema marca el <b>ganador automáticamente por menor precio</b>; puedes cambiarlo
           manualmente marcando otro antes de guardar.
         </p>
-        <button class="primary" onclick="enviarComparativo()">Guardar Comparativo</button>
+        <button class="primary" id="btn-guardar-comparativo" onclick="enviarComparativo()">Guardar Comparativo</button>
       </div>
     </section>
 
@@ -177,7 +177,7 @@
 
         <h4 style="margin-top:16px;">Ítems ganadores <span style="font-weight:normal;color:#777;">(cargados automáticamente del Comparativo)</span></h4>
         <div id="oc-items"></div>
-        <button class="primary" onclick="enviarOC()">Autorizar y Emitir OC</button>
+        <button class="primary" id="btn-emitir-oc" onclick="enviarOC()">Autorizar y Emitir OC</button>
         <p style="font-size:11px; color:#777; margin-top:8px;">
           Si hay ítems de distintos proveedores, el sistema genera automáticamente una OC
           separada por cada proveedor.
@@ -390,6 +390,13 @@ agregarFilaItemRequisicion();
 let nReqBorradorActual = null;
 
 async function enviarRequisicion() {
+  const btn = document.getElementById('btn-crear-requisicion');
+  if (btn.disabled) return; // evita doble envío por doble clic
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Creando...';
+  try {
+
   const items = [...document.querySelectorAll('#req-items .itemRow')].map(row => ({
     codigo: row.querySelector('.req-item-codigo').value,
     descripcion: row.querySelector('.req-item-desc').value,
@@ -422,10 +429,22 @@ async function enviarRequisicion() {
   } else {
     toast('Error: ' + res.error);
   }
+
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+  }
 }
 
 async function validarRequisicionActual() {
+  const btn = document.getElementById('btn-validar-req');
+  if (btn.disabled) return;
   if (!nReqBorradorActual) { toast('No hay borrador para validar.'); return; }
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Validando...';
+  try {
+
   const res = await callBackend('validarRequisicion', { nRequisicion: nReqBorradorActual, usuario: currentUser });
   if (res.ok) {
     if (res.folioCorregido) {
@@ -443,6 +462,11 @@ async function validarRequisicionActual() {
     agregarFilaItemRequisicion();
   } else {
     toast('Error al validar: ' + res.error);
+  }
+
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
   }
 }
 
@@ -578,6 +602,8 @@ function agregarFilaCotizacion(btn, codigo) {
 }
 
 async function enviarComparativo() {
+  const btn = document.getElementById('btn-guardar-comparativo');
+  if (btn.disabled) return;
   const nReq = document.getElementById('comp-select-req').value;
   if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
@@ -596,12 +622,20 @@ async function enviarComparativo() {
 
   if (!cotizaciones.length) { toast('Agrega al menos una cotización.'); return; }
 
-  const res = await callBackend('guardarComparativo', { usuario: currentUser, nRequisicion: nReq, cotizaciones });
-  toast(res.ok ? 'Comparativo guardado. El ganador quedó marcado automáticamente por menor precio.' : 'Error: ' + res.error);
-  if (res.ok) {
-    poblarSelectorRequisicionesComparativo();
-    document.getElementById('comp-select-req').value = '';
-    cargarRequisicionEnComparativo();
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Guardando...';
+  try {
+    const res = await callBackend('guardarComparativo', { usuario: currentUser, nRequisicion: nReq, cotizaciones });
+    toast(res.ok ? 'Comparativo guardado. El ganador quedó marcado automáticamente por menor precio.' : 'Error: ' + res.error);
+    if (res.ok) {
+      poblarSelectorRequisicionesComparativo();
+      document.getElementById('comp-select-req').value = '';
+      cargarRequisicionEnComparativo();
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
   }
 }
 
@@ -715,6 +749,8 @@ async function cargarRequisicionEnOC() {
 }
 
 async function enviarOC() {
+  const btn = document.getElementById('btn-emitir-oc');
+  if (btn.disabled) return;
   const nReq = document.getElementById('oc-select-req').value;
   if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
@@ -743,6 +779,10 @@ async function enviarOC() {
     proveedoresDetalle: proveedoresDetalleActuales
   };
 
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Emitiendo...';
+  try {
   const res = await callBackend('emitirOC', payload);
   if (res.ok) {
     toast('OC(s) emitidas: ' + res.ocsGeneradas.join(', '));
@@ -755,6 +795,10 @@ async function enviarOC() {
     cargarRequisicionEnOC();
   } else {
     toast('Error: ' + res.error);
+  }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
   }
 }
 
@@ -861,6 +905,8 @@ async function cargarRequisicionEnBodega() {
 }
 
 async function enviarRevisionDisponibilidad() {
+  const btn = document.getElementById('btn-guardar-disponibilidad');
+  if (btn.disabled) return;
   const nReq = document.getElementById('bodega-select-req').value;
   if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
@@ -869,12 +915,20 @@ async function enviarRevisionDisponibilidad() {
     cantidadDisponible: input.value || 0
   }));
 
-  const res = await callBackend('revisarDisponibilidad', { nRequisicion: nReq, usuario: currentUser, items });
-  if (res.ok) {
-    toast('Disponibilidad guardada. El stock asignado ya se rebajó del Inventario Bodega.');
-    cargarRequisicionEnBodega();
-  } else {
-    toast('Error: ' + res.error);
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Guardando...';
+  try {
+    const res = await callBackend('revisarDisponibilidad', { nRequisicion: nReq, usuario: currentUser, items });
+    if (res.ok) {
+      toast('Disponibilidad guardada. El stock asignado ya se rebajó del Inventario Bodega.');
+      cargarRequisicionEnBodega();
+    } else {
+      toast('Error: ' + res.error);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
   }
 }
 
