@@ -56,6 +56,7 @@
 
   <nav>
     <button class="tab active" data-view="requisicion">Requisición</button>
+    <button class="tab" data-view="bodega">Bodega</button>
     <button class="tab" data-view="comparativo">Comparativo</button>
     <button class="tab" data-view="oc">OC</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
@@ -90,11 +91,38 @@
       <div class="card" id="req-panel-validacion" style="display:none; border:2px solid var(--orange);">
         <h3>Borrador creado — revisar y validar</h3>
         <p id="req-resumen-borrador" style="font-size:13px; color:#555;"></p>
-        <p style="font-size:12px; color:#777;">
+        <table style="margin-top:10px;">
+          <thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Unidad</th></tr></thead>
+          <tbody id="req-tabla-borrador"></tbody>
+        </table>
+        <p style="font-size:12px; color:#777; margin-top:10px;">
           Revisa que los datos estén correctos. Al validar, la requisición queda activa
           y se envía por correo a Bodega/Logística para revisar disponibilidad.
         </p>
         <button class="primary" onclick="validarRequisicionActual()">Validar y enviar</button>
+      </div>
+    </section>
+
+    <!-- ===================== VISTA: BODEGA (revisión de disponibilidad) ===================== -->
+    <section id="view-bodega" class="view hidden">
+      <div class="card">
+        <h3>Revisar disponibilidad en Bodega</h3>
+        <label>Selecciona la Requisición</label>
+        <select id="bodega-select-req" onchange="cargarRequisicionEnBodega()">
+          <option value="">-- Elige una requisición pendiente --</option>
+        </select>
+        <div id="bodega-info-req" style="font-size:12px; color:#777; margin-top:6px;"></div>
+
+        <table style="margin-top:14px;">
+          <thead><tr><th>Código</th><th>Descripción</th><th>Solicitado</th><th>Stock en Bodega</th><th>Disponible a asignar</th></tr></thead>
+          <tbody id="bodega-tabla-items"></tbody>
+        </table>
+        <p style="font-size:11px; color:#777; margin-top:8px;">
+          Indica cuánto de cada ítem se puede cubrir con stock actual. Esa cantidad se
+          rebaja automáticamente del Inventario Bodega. Lo no cubierto queda pendiente
+          de cotizar en la pestaña Comparativo.
+        </p>
+        <button class="primary" onclick="enviarRevisionDisponibilidad()">Guardar revisión</button>
       </div>
     </section>
 
@@ -295,6 +323,9 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     if (btn.dataset.view === 'oc') {
       poblarSelectorRequisicionesOC();
     }
+    if (btn.dataset.view === 'bodega') {
+      poblarSelectorRequisicionesBodega();
+    }
   });
 });
 
@@ -384,6 +415,9 @@ async function enviarRequisicion() {
     toast('Borrador creado: ' + res.nRequisicion);
     document.getElementById('req-resumen-borrador').textContent =
       `${res.nRequisicion} — ${payload.centroCosto} / ${payload.obra} — ${items.length} ítem(s), criticidad ${payload.criticidad}`;
+    document.getElementById('req-tabla-borrador').innerHTML = items.map(it =>
+      `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${it.cantidad}</td><td>${it.unidad}</td></tr>`
+    ).join('');
     document.getElementById('req-panel-validacion').style.display = 'block';
   } else {
     toast('Error: ' + res.error);
@@ -790,6 +824,58 @@ async function cargarPresupuesto() {
       <td>$${Number(r['Gasto Acumulado'] || 0).toLocaleString('es-CL')}</td>
       <td>${((r['% Ejecutado'] || 0) * 100).toFixed(1)}%</td>
     </tr>`).join('');
+}
+
+/* ---------------- Bodega: revisión de disponibilidad ---------------- */
+async function poblarSelectorRequisicionesBodega() {
+  const res = await callBackend('listarRequisicionesAbiertas', { estado: 'PENDIENTE' });
+  const select = document.getElementById('bodega-select-req');
+  const actual = select.value;
+  select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
+    (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
+  select.value = actual;
+}
+
+async function cargarRequisicionEnBodega() {
+  const nReq = document.getElementById('bodega-select-req').value;
+  const tbody = document.getElementById('bodega-tabla-items');
+  const info = document.getElementById('bodega-info-req');
+  tbody.innerHTML = '';
+  info.textContent = '';
+  if (!nReq) return;
+
+  const res = await callBackend('obtenerRequisicionParaRevision', { nRequisicion: nReq });
+  if (!res.ok) { toast('Error: ' + res.error); return; }
+
+  info.textContent = `Centro de Costo: ${res.encabezado['Centro de Costo']} · Obra: ${res.encabezado['Obra']} · Solicitante: ${res.encabezado['Solicitante']}`;
+
+  tbody.innerHTML = res.items.map(it => `
+    <tr>
+      <td>${it.codigo}</td>
+      <td>${it.descripcion}</td>
+      <td>${it.cantidadSolicitada} ${it.unidad}</td>
+      <td style="color:${Number(it.stockEnBodega) > 0 ? '#27ae60' : '#c0392b'};">${it.stockEnBodega} ${it.unidad}</td>
+      <td><input type="number" class="bodega-item-disponible" data-codigo="${it.codigo}"
+            value="${it.cantidadDisponibleActual}" min="0" max="${it.cantidadSolicitada}" style="max-width:90px;"></td>
+    </tr>`).join('');
+}
+
+async function enviarRevisionDisponibilidad() {
+  const nReq = document.getElementById('bodega-select-req').value;
+  if (!nReq) { toast('Selecciona una requisición primero.'); return; }
+
+  const items = [...document.querySelectorAll('.bodega-item-disponible')].map(input => ({
+    codigo: input.dataset.codigo,
+    cantidadDisponible: input.value || 0
+  }));
+
+  const res = await callBackend('revisarDisponibilidad', { nRequisicion: nReq, usuario: currentUser, items });
+  if (res.ok) {
+    toast('Disponibilidad guardada. El stock asignado ya se rebajó del Inventario Bodega.');
+    cargarRequisicionEnBodega();
+  } else {
+    toast('Error: ' + res.error);
+  }
 }
 
 /* Service worker (network-first, igual patrón que Charla Diaria) */
