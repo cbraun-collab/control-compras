@@ -255,7 +255,13 @@ function toast(msg) {
 function callBackend(action, payload) {
   return new Promise((resolve, reject) => {
     const cbName = 'jsonpCb' + (jsonpCounter++);
+    const timeoutId = setTimeout(() => {
+      delete window[cbName];
+      document.getElementById(cbName + '_script')?.remove();
+      reject(new Error(`Sin respuesta del servidor después de 45s llamando a "${action}" (posible URL demasiado larga o problema de red).`));
+    }, 45000);
     window[cbName] = (data) => {
+      clearTimeout(timeoutId);
       delete window[cbName];
       document.getElementById(cbName + '_script')?.remove();
       resolve(data);
@@ -266,7 +272,7 @@ function callBackend(action, payload) {
     const script = document.createElement('script');
     script.id = cbName + '_script';
     script.src = url;
-    script.onerror = () => reject(new Error('Error de red llamando a ' + action));
+    script.onerror = () => { clearTimeout(timeoutId); reject(new Error('Error de red llamando a ' + action)); };
     document.body.appendChild(script);
   });
 }
@@ -545,7 +551,7 @@ function agregarFilaCotizacion(btn, codigo) {
     </div>
     <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:110px">
     <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">
-    <label class="secondary" style="display:flex; align-items:center; justify-content:center; max-width:36px; padding:8px; cursor:pointer; margin:0;" title="Adjuntar cotización (PDF, imagen, Word, Excel)">
+    <label class="secondary" style="display:flex; align-items:center; justify-content:center; min-width:42px; max-width:42px; height:38px; padding:8px; cursor:pointer; margin:0; font-size:20px; border-width:2px;" title="Adjuntar cotización (PDF, imagen, Word, Excel)">
       📎<input type="file" class="comp-archivo-cotizacion" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" style="display:none;">
     </label>
     <span class="comp-archivo-estado" style="font-size:10px; color:#777; align-self:center;"></span>`;
@@ -626,6 +632,7 @@ function agregarFilaCotizacion(btn, codigo) {
     if (!nReqActual) { toast('Selecciona una requisición primero.'); inputArchivo.value = ''; return; }
 
     estadoArchivo.textContent = 'Subiendo...';
+    try {
     const base64Content = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -663,6 +670,10 @@ function agregarFilaCotizacion(btn, codigo) {
       }
     } else {
       estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> guardado — completa los datos manualmente`;
+    }
+    } catch (err) {
+      estadoArchivo.textContent = '';
+      toast('Error al subir/leer el archivo: ' + err.message);
     }
   });
 }
