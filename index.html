@@ -516,6 +516,19 @@ async function cargarRequisicionEnComparativo() {
 
 let cotizacionCounter = 0;
 
+// Compara dos descripciones de material de forma flexible (no exacta), porque cada
+// proveedor usa sus propios nombres/códigos y rara vez calzan al 100% con el Inventario.
+// Considera que "calzan" si comparten al menos una palabra significativa (3+ letras,
+// ignorando palabras muy comunes que no aportan al significado).
+function descripcionesCalzan(desc1, desc2) {
+  const PALABRAS_IGNORADAS = new Set(['con', 'para', 'del', 'las', 'los', 'una', 'unos', 'unas', 'por']);
+  const normalizar = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') // saca tildes
+    .toUpperCase().split(/[^A-Z0-9]+/).filter(p => p.length >= 3 && !PALABRAS_IGNORADAS.has(p.toLowerCase()));
+  const palabras1 = new Set(normalizar(desc1));
+  const palabras2 = normalizar(desc2);
+  return palabras2.some(p => palabras1.has(p));
+}
+
 function agregarFilaCotizacion(btn, codigo) {
   const lista = btn.previousElementSibling;
   const id = 'cot' + (cotizacionCounter++);
@@ -636,7 +649,15 @@ function agregarFilaCotizacion(btn, codigo) {
         if (d.proveedor) { buscador.value = d.proveedor; div.querySelector('.comp-proveedor').value = d.proveedor; }
         if (d.precioUnitario) div.querySelector('.comp-precio').value = d.precioUnitario;
         if (d.plazoEntrega) div.querySelector('.comp-plazo').value = d.plazoEntrega;
-        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>`;
+
+        let avisoDescripcion = '';
+        const itemEsperado = comparativoItemsActuales.find(it => it['Codigo Articulo'] === codigo);
+        if (d.descripcionMaterial && itemEsperado) {
+          if (!descripcionesCalzan(d.descripcionMaterial, itemEsperado['Descripcion'])) {
+            avisoDescripcion = `<br><span style="color:#CF4520; font-weight:bold;">⚠️ El documento dice "${d.descripcionMaterial}" — no calza claramente con "${itemEsperado['Descripcion']}" que pediste. Verifica que sea el material correcto antes de guardar.</span>`;
+          }
+        }
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${avisoDescripcion}`;
       } else {
         estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente`;
       }
