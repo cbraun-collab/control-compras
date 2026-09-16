@@ -478,6 +478,7 @@ async function validarRequisicionActual() {
 
 /* ---------------- Comparativo: selección de requisición + cotizaciones por ítem ---------------- */
 let comparativoItemsActuales = []; // items de la requisición seleccionada
+let subidasEnCurso = 0; // cuenta archivos que aún se están subiendo/leyendo con IA
 
 async function poblarSelectorRequisicionesComparativo() {
   const res = await callBackend('listarRequisicionesAbiertas', { estado: 'PENDIENTE' });
@@ -632,6 +633,7 @@ function agregarFilaCotizacion(btn, codigo) {
     if (!nReqActual) { toast('Selecciona una requisición primero.'); inputArchivo.value = ''; return; }
 
     estadoArchivo.textContent = 'Subiendo...';
+    subidasEnCurso++;
     try {
     const base64Content = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -674,6 +676,8 @@ function agregarFilaCotizacion(btn, codigo) {
     } catch (err) {
       estadoArchivo.textContent = '';
       toast('Error al subir/leer el archivo: ' + err.message);
+    } finally {
+      subidasEnCurso--;
     }
   });
 }
@@ -681,6 +685,10 @@ function agregarFilaCotizacion(btn, codigo) {
 async function enviarComparativo() {
   const btn = document.getElementById('btn-guardar-comparativo');
   if (btn.disabled) return;
+  if (subidasEnCurso > 0) {
+    toast('Espera a que terminen de subirse todos los archivos antes de guardar (' + subidasEnCurso + ' en curso).');
+    return;
+  }
   const nReq = document.getElementById('comp-select-req').value;
   if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
