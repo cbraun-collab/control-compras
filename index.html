@@ -190,16 +190,19 @@
       <div class="card">
         <h3>Requisiciones</h3>
         <button class="secondary" onclick="cargarRequisiciones()">Actualizar</button>
+        <input id="filtro-requisiciones" placeholder="Buscar por N° o código de obra..." style="margin-top:8px;" oninput="filtrarTablaRequisiciones()">
         <table id="tabla-requisiciones">
-          <thead><tr><th>N°</th><th>Obra</th><th>Criticidad</th><th>Estado</th></tr></thead>
+          <thead><tr><th>N°</th><th>Obra</th><th>Criticidad</th><th>Estado</th><th>Acciones</th></tr></thead>
           <tbody></tbody>
         </table>
+        <div id="panel-documentos-asociados" class="card" style="display:none; background:#fafafa; margin-top:10px;"></div>
       </div>
       <div class="card">
         <h3>Órdenes de Compra</h3>
         <button class="secondary" onclick="cargarOC()">Actualizar</button>
+        <input id="filtro-oc" placeholder="Buscar por N° o código de obra..." style="margin-top:8px;" oninput="filtrarTablaOC()">
         <table id="tabla-oc">
-          <thead><tr><th>N° OC</th><th>Proveedor</th><th>Total</th><th>Estado</th><th>Cambiar a</th></tr></thead>
+          <thead><tr><th>N° OC</th><th>Obra</th><th>Proveedor</th><th>Total</th><th>Estado</th><th>Cambiar a</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -457,6 +460,13 @@ async function validarRequisicionActual() {
       toast(`Folio corregido por duplicidad — quedó como ${res.nRequisicion}, validada y enviada.`);
     } else {
       toast(`Requisición ${res.nRequisicion} validada y enviada a Bodega/Logística.`);
+    }
+    const pdf = await callBackend('generarPDFRequisicion', { nRequisicion: res.nRequisicion });
+    if (pdf.ok) {
+      toast('PDF de la requisición guardado en Drive: ' + pdf.link);
+      if (pdf.avisoCarpetaProyecto) toast('Aviso: ' + pdf.avisoCarpetaProyecto);
+    } else {
+      toast('Requisición validada, pero hubo un error guardando el PDF: ' + pdf.error);
     }
     document.getElementById('req-panel-validacion').style.display = 'none';
     nReqBorradorActual = null;
@@ -894,25 +904,76 @@ function badgeCriticidad(c) {
   return `<span class="badge ${cls}">${c}</span>`;
 }
 
+let requisicionesActuales = []; // cache para poder filtrar sin volver a pedir al backend
+
 async function cargarRequisiciones() {
   const res = await callBackend('listarRequisiciones', {});
+  requisicionesActuales = res.data || [];
+  document.getElementById('filtro-requisiciones').value = '';
+  renderTablaRequisiciones(requisicionesActuales);
+}
+
+function renderTablaRequisiciones(filas) {
   const tbody = document.querySelector('#tabla-requisiciones tbody');
-  tbody.innerHTML = (res.data || []).map(r => `
+  tbody.innerHTML = filas.map(r => `
     <tr>
       <td>${r['N Requisicion']}</td>
       <td>${r['Obra'] || ''}</td>
       <td>${badgeCriticidad(r['Criticidad'])}</td>
       <td>${r['Estado']}</td>
+      <td><button class="secondary" onclick="verDocumentosAsociados('${r['N Requisicion']}')" style="font-size:11px; padding:4px 8px;">Ver documentos</button></td>
     </tr>`).join('');
+  document.getElementById('panel-documentos-asociados').style.display = 'none';
 }
+
+async function verDocumentosAsociados(nReq) {
+  const panel = document.getElementById('panel-documentos-asociados');
+  panel.style.display = 'block';
+  panel.innerHTML = 'Cargando...';
+  const res = await callBackend('obtenerDocumentosAsociados', { nRequisicion: nReq });
+  if (!res.ok) { panel.innerHTML = 'Error: ' + res.error; return; }
+
+  const linkReq = res.requisicion['PDF Drive Link']
+    ? `<a href="${res.requisicion['PDF Drive Link']}" target="_blank">Ver PDF</a>` : '(sin PDF guardado)';
+  const filasOC = res.ocs.length
+    ? res.ocs.map(oc => `<li><b>${oc['N OC']}</b> — ${oc['Proveedor']} — ${oc['Estado']} — ${oc['PDF Drive Link'] ? `<a href="${oc['PDF Drive Link']}" target="_blank">Ver PDF</a>` : '(sin PDF guardado)'}</li>`).join('')
+    : '<li style="color:#888;">Ninguna OC emitida todavía para esta requisición.</li>';
+
+  panel.innerHTML = `
+    <h4 style="margin-top:0;">Documentos asociados a ${nReq}</h4>
+    <p><b>Requisición:</b> ${linkReq}</p>
+    <p><b>Órdenes de Compra:</b></p>
+    <ul>${filasOC}</ul>
+    <p style="font-size:11px; color:#888;">Factura e Ingreso/Egreso de bodega se suman acá cuando se construyan esas piezas (fases posteriores).</p>`;
+}
+
+function filtrarTablaRequisiciones() {
+  const termino = document.getElementById('filtro-requisiciones').value.trim().toUpperCase();
+  if (!termino) { renderTablaRequisiciones(requisicionesActuales); return; }
+  const filtradas = requisicionesActuales.filter(r =>
+    String(r['N Requisicion'] || '').toUpperCase().includes(termino) ||
+    String(r['Centro de Costo'] || '').toUpperCase().includes(termino) ||
+    String(r['Obra'] || '').toUpperCase().includes(termino)
+  );
+  renderTablaRequisiciones(filtradas);
+}
+
+let ocActuales = []; // cache para poder filtrar sin volver a pedir al backend
 
 async function cargarOC() {
   const res = await callBackend('listarOC', {});
+  ocActuales = res.data || [];
+  document.getElementById('filtro-oc').value = '';
+  renderTablaOC(ocActuales);
+}
+
+function renderTablaOC(filas) {
   const tbody = document.querySelector('#tabla-oc tbody');
   const estadosSiguientes = ['EN CAMINO','PRONTA ENTREGA','RECIBIDO PARCIAL','RECIBIDO COMPLETO','CON DIFERENCIA'];
-  tbody.innerHTML = (res.data || []).map(r => `
+  tbody.innerHTML = filas.map(r => `
     <tr>
       <td>${r['N OC']}</td>
+      <td>${r['Obra'] || ''}</td>
       <td>${r['Proveedor']}</td>
       <td>$${Number(r['Total Final OC'] || 0).toLocaleString('es-CL')}</td>
       <td>${r['Estado']}</td>
@@ -923,6 +984,18 @@ async function cargarOC() {
         </select>
       </td>
     </tr>`).join('');
+}
+
+function filtrarTablaOC() {
+  const termino = document.getElementById('filtro-oc').value.trim().toUpperCase();
+  if (!termino) { renderTablaOC(ocActuales); return; }
+  const filtradas = ocActuales.filter(r =>
+    String(r['N OC'] || '').toUpperCase().includes(termino) ||
+    String(r['Centro de Costo'] || '').toUpperCase().includes(termino) ||
+    String(r['Obra'] || '').toUpperCase().includes(termino) ||
+    String(r['N Requisicion Origen'] || '').toUpperCase().includes(termino)
+  );
+  renderTablaOC(filtradas);
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
