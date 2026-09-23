@@ -497,6 +497,7 @@ async function poblarSelectorRequisicionesComparativo() {
   select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
     (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
+  if (actual) cargarRequisicionEnComparativo();
 }
 
 async function cargarRequisicionEnComparativo() {
@@ -746,6 +747,7 @@ async function poblarSelectorRequisicionesOC() {
   select.innerHTML = '<option value="">-- Elige una requisición en cotización --</option>' +
     opciones.map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
+  if (actual) cargarRequisicionEnOC();
   const aviso = document.getElementById('oc-aviso-vacio');
   if (aviso) aviso.style.display = opciones.length ? 'none' : 'block';
 }
@@ -1037,6 +1039,7 @@ async function poblarSelectorRequisicionesBodega() {
   select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
     (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
+  if (actual) cargarRequisicionEnBodega();
 }
 
 async function cargarRequisicionEnBodega() {
