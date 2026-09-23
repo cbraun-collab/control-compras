@@ -51,7 +51,10 @@
       </div>
       <h1>Control Compras SENERCOM</h1>
     </div>
-    <span id="userBadge"></span>
+    <div style="text-align:right; line-height:1.3;">
+      <div style="font-size:11px; opacity:0.85;">PWA-ADQ-002 REV 0 23-09-2026</div>
+      <span id="userBadge"></span>
+    </div>
   </header>
 
   <nav>
@@ -244,7 +247,6 @@ const USUARIOS_AUTORIZADOS = [
 ];
 
 let currentUser = null;
-let jsonpCounter = 0;
 
 function toast(msg) {
   const el = document.createElement('div');
@@ -254,29 +256,44 @@ function toast(msg) {
   setTimeout(() => el.remove(), 3500);
 }
 
-/* ---------------- JSONP call al backend Apps Script ---------------- */
+/* ---------------- Llamada al backend Apps Script vía fetch + POST ----------------
+   Antes se usaba JSONP (<script src>) para GET, pero el redirect que hace Google
+   por dentro (script.google.com -> script.googleusercontent.com) falló intermitente
+   con 404 en pruebas reales. fetch + doPost evita ese camino y es el mismo patrón
+   que ya se validó como más estable en otra de las apps. El body se manda como
+   application/x-www-form-urlencoded (no JSON) para que Apps Script siga leyendo
+   action/payload desde e.parameter tal cual antes, sin tocar el backend. */
 function callBackendUnaVez(action, payload) {
   return new Promise((resolve, reject) => {
-    const cbName = 'jsonpCb' + (jsonpCounter++);
+    const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      delete window[cbName];
-      document.getElementById(cbName + '_script')?.remove();
-      reject(new Error(`Sin respuesta del servidor después de 45s llamando a "${action}" (posible URL demasiado larga o problema de red).`));
+      controller.abort();
     }, 45000);
-    window[cbName] = (data) => {
-      clearTimeout(timeoutId);
-      delete window[cbName];
-      document.getElementById(cbName + '_script')?.remove();
-      resolve(data);
-    };
-    const url = `${APPS_SCRIPT_URL}?action=${encodeURIComponent(action)}` +
-      `&payload=${encodeURIComponent(JSON.stringify(payload || {}))}` +
-      `&callback=${cbName}`;
-    const script = document.createElement('script');
-    script.id = cbName + '_script';
-    script.src = url;
-    script.onerror = () => { clearTimeout(timeoutId); reject(new Error('Error de red llamando a ' + action)); };
-    document.body.appendChild(script);
+    const body = 'action=' + encodeURIComponent(action) +
+      '&payload=' + encodeURIComponent(JSON.stringify(payload || {}));
+    fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+      signal: controller.signal
+    })
+      .then(resp => {
+        clearTimeout(timeoutId);
+        if (!resp.ok) throw new Error('Error HTTP ' + resp.status + ' llamando a ' + action);
+        return resp.text();
+      })
+      .then(text => {
+        try { resolve(JSON.parse(text)); }
+        catch (e) { reject(new Error('Respuesta no válida del servidor llamando a ' + action)); }
+      })
+      .catch(err => {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          reject(new Error(`Sin respuesta del servidor después de 45s llamando a "${action}".`));
+        } else {
+          reject(new Error('Error de red llamando a ' + action + ': ' + err.message));
+        }
+      });
   });
 }
 
@@ -383,8 +400,16 @@ function agregarFilaItemRequisicion() {
     const termino = buscador.value;
     if (termino.length < 2) { sugerenciasBox.style.display = 'none'; return; }
     debounceTimer = setTimeout(async () => {
-      const res = await callBackend('buscarArticulo', { termino });
-      if (!res.ok || !res.data.length) { sugerenciasBox.style.display = 'none'; return; }
+      let res;
+      try {
+        res = await callBackend('buscarArticulo', { termino });
+      } catch (err) {
+        sugerenciasBox.style.display = 'none';
+        toast('Error buscando artículo: ' + err.message);
+        return;
+      }
+      if (!res.ok) { sugerenciasBox.style.display = 'none'; toast('Error buscando artículo: ' + (res.error || 'desconocido')); return; }
+      if (!res.data.length) { sugerenciasBox.style.display = 'none'; return; }
       sugerenciasBox.innerHTML = res.data.map(a => `
         <div class="sugerencia-item" data-codigo="${a.codigo}" data-desc="${a.descripcion.replace(/"/g,'&quot;')}" data-unidad="${a.unidad}" data-stock="${a.stockActual}"
              style="padding:8px; cursor:pointer; border-bottom:1px solid #eee; font-size:12px;">
