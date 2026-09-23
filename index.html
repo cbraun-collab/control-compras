@@ -255,7 +255,7 @@ function toast(msg) {
 }
 
 /* ---------------- JSONP call al backend Apps Script ---------------- */
-function callBackend(action, payload) {
+function callBackendUnaVez(action, payload) {
   return new Promise((resolve, reject) => {
     const cbName = 'jsonpCb' + (jsonpCounter++);
     const timeoutId = setTimeout(() => {
@@ -278,6 +278,21 @@ function callBackend(action, payload) {
     script.onerror = () => { clearTimeout(timeoutId); reject(new Error('Error de red llamando a ' + action)); };
     document.body.appendChild(script);
   });
+}
+
+// Reintento automático: si una llamada falla por red/timeout (no por error de negocio,
+// esos ya vienen con ok:false dentro de una respuesta válida), reintenta hasta 2 veces
+// más con ~1s de espera antes de mostrarle el error al usuario.
+async function callBackend(action, payload, intento = 1) {
+  try {
+    return await callBackendUnaVez(action, payload);
+  } catch (err) {
+    if (intento < 3) {
+      await new Promise(r => setTimeout(r, 1000));
+      return callBackend(action, payload, intento + 1);
+    }
+    throw err;
+  }
 }
 
 /* ---------------- Login OAuth (Google Identity Services) ---------------- */
