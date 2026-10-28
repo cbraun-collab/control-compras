@@ -51,10 +51,7 @@
       </div>
       <h1>Control Compras SENERCOM</h1>
     </div>
-    <div style="text-align:right; line-height:1.3;">
-      <div style="font-size:11px; opacity:0.85;">PWA-ADQ-002 REV 0 23-09-2026</div>
-      <span id="userBadge"></span>
-    </div>
+    <span id="userBadge"></span>
   </header>
 
   <nav>
@@ -247,6 +244,7 @@ const USUARIOS_AUTORIZADOS = [
 ];
 
 let currentUser = null;
+let jsonpCounter = 0;
 
 function toast(msg) {
   const el = document.createElement('div');
@@ -256,60 +254,30 @@ function toast(msg) {
   setTimeout(() => el.remove(), 3500);
 }
 
-/* ---------------- Llamada al backend Apps Script vía fetch + POST ----------------
-   Antes se usaba JSONP (<script src>) para GET, pero el redirect que hace Google
-   por dentro (script.google.com -> script.googleusercontent.com) falló intermitente
-   con 404 en pruebas reales. fetch + doPost evita ese camino y es el mismo patrón
-   que ya se validó como más estable en otra de las apps. El body se manda como
-   application/x-www-form-urlencoded (no JSON) para que Apps Script siga leyendo
-   action/payload desde e.parameter tal cual antes, sin tocar el backend. */
-function callBackendUnaVez(action, payload) {
+/* ---------------- JSONP call al backend Apps Script ---------------- */
+function callBackend(action, payload) {
   return new Promise((resolve, reject) => {
-    const controller = new AbortController();
+    const cbName = 'jsonpCb' + (jsonpCounter++);
     const timeoutId = setTimeout(() => {
-      controller.abort();
+      delete window[cbName];
+      document.getElementById(cbName + '_script')?.remove();
+      reject(new Error(`Sin respuesta del servidor después de 45s llamando a "${action}" (posible URL demasiado larga o problema de red).`));
     }, 45000);
-    const body = 'action=' + encodeURIComponent(action) +
-      '&payload=' + encodeURIComponent(JSON.stringify(payload || {}));
-    fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body,
-      signal: controller.signal
-    })
-      .then(resp => {
-        clearTimeout(timeoutId);
-        if (!resp.ok) throw new Error('Error HTTP ' + resp.status + ' llamando a ' + action);
-        return resp.text();
-      })
-      .then(text => {
-        try { resolve(JSON.parse(text)); }
-        catch (e) { reject(new Error('Respuesta no válida del servidor llamando a ' + action)); }
-      })
-      .catch(err => {
-        clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-          reject(new Error(`Sin respuesta del servidor después de 45s llamando a "${action}".`));
-        } else {
-          reject(new Error('Error de red llamando a ' + action + ': ' + err.message));
-        }
-      });
+    window[cbName] = (data) => {
+      clearTimeout(timeoutId);
+      delete window[cbName];
+      document.getElementById(cbName + '_script')?.remove();
+      resolve(data);
+    };
+    const url = `${APPS_SCRIPT_URL}?action=${encodeURIComponent(action)}` +
+      `&payload=${encodeURIComponent(JSON.stringify(payload || {}))}` +
+      `&callback=${cbName}`;
+    const script = document.createElement('script');
+    script.id = cbName + '_script';
+    script.src = url;
+    script.onerror = () => { clearTimeout(timeoutId); reject(new Error('Error de red llamando a ' + action)); };
+    document.body.appendChild(script);
   });
-}
-
-// Reintento automático: si una llamada falla por red/timeout (no por error de negocio,
-// esos ya vienen con ok:false dentro de una respuesta válida), reintenta hasta 2 veces
-// más con ~1s de espera antes de mostrarle el error al usuario.
-async function callBackend(action, payload, intento = 1) {
-  try {
-    return await callBackendUnaVez(action, payload);
-  } catch (err) {
-    if (intento < 3) {
-      await new Promise(r => setTimeout(r, 1000));
-      return callBackend(action, payload, intento + 1);
-    }
-    throw err;
-  }
 }
 
 /* ---------------- Login OAuth (Google Identity Services) ---------------- */
@@ -400,16 +368,8 @@ function agregarFilaItemRequisicion() {
     const termino = buscador.value;
     if (termino.length < 2) { sugerenciasBox.style.display = 'none'; return; }
     debounceTimer = setTimeout(async () => {
-      let res;
-      try {
-        res = await callBackend('buscarArticulo', { termino });
-      } catch (err) {
-        sugerenciasBox.style.display = 'none';
-        toast('Error buscando artículo: ' + err.message);
-        return;
-      }
-      if (!res.ok) { sugerenciasBox.style.display = 'none'; toast('Error buscando artículo: ' + (res.error || 'desconocido')); return; }
-      if (!res.data.length) { sugerenciasBox.style.display = 'none'; return; }
+      const res = await callBackend('buscarArticulo', { termino });
+      if (!res.ok || !res.data.length) { sugerenciasBox.style.display = 'none'; return; }
       sugerenciasBox.innerHTML = res.data.map(a => `
         <div class="sugerencia-item" data-codigo="${a.codigo}" data-desc="${a.descripcion.replace(/"/g,'&quot;')}" data-unidad="${a.unidad}" data-stock="${a.stockActual}"
              style="padding:8px; cursor:pointer; border-bottom:1px solid #eee; font-size:12px;">
@@ -531,13 +491,12 @@ let comparativoItemsActuales = []; // items de la requisición seleccionada
 let subidasEnCurso = 0; // cuenta archivos que aún se están subiendo/leyendo con IA
 
 async function poblarSelectorRequisicionesComparativo() {
-  const res = await callBackend('listarRequisicionesAbiertas', { estado: 'PENDIENTE' });
+  const res = await callBackend('listarRequisicionesAbiertas', { estado: 'PENDIENTE,DISPONIBILIDAD REVISADA' });
   const select = document.getElementById('comp-select-req');
   const actual = select.value;
   select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
     (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
-  if (actual) cargarRequisicionEnComparativo();
 }
 
 async function cargarRequisicionEnComparativo() {
@@ -554,19 +513,6 @@ async function cargarRequisicionEnComparativo() {
 
   info.textContent = `Centro de Costo: ${res.encabezado['Centro de Costo']} · Obra: ${res.encabezado['Obra']} · Criticidad: ${res.encabezado['Criticidad']}`;
   comparativoItemsActuales = res.items;
-
-  const multiUpload = document.createElement('div');
-  multiUpload.style.cssText = 'border:2px dashed var(--orange); border-radius:6px; padding:12px; margin-bottom:14px; background:#fff8f5;';
-  multiUpload.innerHTML = `
-    <b>Subir cotización con varios productos</b>
-    <span style="font-weight:normal; color:#777; font-size:12px;">(un PDF/imagen de un proveedor que cotiza varios ítems a la vez — el sistema intenta calzarlos solo)</span>
-    <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <label class="secondary" style="cursor:pointer; margin:0;">📎 Elegir archivo<input type="file" id="comp-multi-archivo" accept=".pdf,.jpg,.jpeg,.png" style="display:none;"></label>
-      <span id="comp-multi-estado" style="font-size:12px; color:#777;"></span>
-    </div>
-    <div id="comp-multi-revision" style="margin-top:8px;"></div>`;
-  contenedor.appendChild(multiUpload);
-  document.getElementById('comp-multi-archivo').addEventListener('change', manejarSubidaCotizacionMultiple);
 
   res.items.forEach((item, idx) => {
     const bloque = document.createElement('div');
@@ -601,10 +547,7 @@ function descripcionesCalzan(desc1, desc2) {
 }
 
 function agregarFilaCotizacion(btn, codigo) {
-  crearFilaCotizacion(btn.previousElementSibling, codigo);
-}
-
-function crearFilaCotizacion(lista, codigo) {
+  const lista = btn.previousElementSibling;
   const id = 'cot' + (cotizacionCounter++);
   const div = document.createElement('div');
   div.className = 'itemRow';
@@ -747,126 +690,6 @@ function crearFilaCotizacion(lista, codigo) {
       subidasEnCurso--;
     }
   });
-
-  return div;
-}
-
-// Crea (y pre-llena) una fila de cotización para `codigo` a partir de datos ya extraídos
-// —usada por el flujo de "cotización con varios productos" tras calzar automáticamente,
-// o tras una asignación manual—, en vez de que el usuario suba archivo por archivo.
-function agregarFilaCotizacionConDatos(codigo, datos) {
-  const lista = document.querySelector(`.comp-proveedores-lista[data-codigo="${codigo}"]`);
-  if (!lista) { toast('No se encontró el ítem ' + codigo + ' en pantalla.'); return; }
-  const div = crearFilaCotizacion(lista, codigo);
-  const buscador = div.querySelector('.comp-proveedor-buscador');
-  if (datos.proveedor) { buscador.value = datos.proveedor; div.querySelector('.comp-proveedor').value = datos.proveedor; }
-  if (datos.precioUnitario) div.querySelector('.comp-precio').value = datos.precioUnitario;
-  if (datos.plazoEntrega) div.querySelector('.comp-plazo').value = datos.plazoEntrega;
-  div.dataset.respaldoLink = datos.archivoLink || '';
-
-  let avisoDescripcion = '';
-  const itemEsperado = comparativoItemsActuales.find(it => it['Codigo Articulo'] === codigo);
-  if (datos.descripcionOriginal && itemEsperado && !descripcionesCalzan(datos.descripcionOriginal, itemEsperado['Descripcion'])) {
-    avisoDescripcion = `<br><span style="color:#CF4520; font-weight:bold;">⚠️ Asignado manualmente — el documento decía "${datos.descripcionOriginal}", verifica que sea el material correcto.</span>`;
-  }
-  const estadoArchivo = div.querySelector('.comp-archivo-estado');
-  estadoArchivo.innerHTML = `${datos.archivoLink ? `<a href="${datos.archivoLink}" target="_blank">Ver archivo</a> · ` : ''}IA propuso datos (cotización multi-producto) — <b>revisa antes de guardar</b>${avisoDescripcion}`;
-}
-
-// ---- Subida de una cotización con varios productos a la vez ----
-
-async function manejarSubidaCotizacionMultiple() {
-  const inputArchivo = document.getElementById('comp-multi-archivo');
-  const estado = document.getElementById('comp-multi-estado');
-  const revisionBox = document.getElementById('comp-multi-revision');
-  const archivo = inputArchivo.files[0];
-  if (!archivo) return;
-  const nReqActual = document.getElementById('comp-select-req').value;
-  if (!nReqActual) { toast('Selecciona una requisición primero.'); inputArchivo.value = ''; return; }
-
-  estado.textContent = 'Subiendo...';
-  revisionBox.innerHTML = '';
-  subidasEnCurso++;
-  try {
-    const base64Content = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(archivo);
-    });
-
-    const subida = await callBackend('subirCotizacion', {
-      nRequisicion: nReqActual, nombreArchivo: archivo.name,
-      mimeType: archivo.type, base64Content
-    });
-    if (!subida.ok) { toast('Error al subir: ' + subida.error); estado.textContent = ''; return; }
-
-    estado.textContent = 'Leyendo varios productos con IA...';
-    const extraccion = await callBackend('extraerCotizacionMultiple', { base64Content, mimeType: archivo.type });
-    if (!extraccion.ok || !extraccion.datos || !extraccion.datos.items || !extraccion.datos.items.length) {
-      estado.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · La IA no pudo identificar productos en el documento — agrégalos manualmente por ítem.`;
-      return;
-    }
-
-    const proveedor = extraccion.datos.proveedor || '';
-    const plazo = extraccion.datos.plazoEntrega || '';
-    const pendientes = [];
-
-    extraccion.datos.items.forEach(it => {
-      const coincidencias = comparativoItemsActuales.filter(reqItem =>
-        descripcionesCalzan(it.descripcionMaterial || '', reqItem['Descripcion']));
-      if (coincidencias.length === 1) {
-        agregarFilaCotizacionConDatos(coincidencias[0]['Codigo Articulo'], {
-          proveedor, precioUnitario: it.precioUnitario, plazoEntrega: plazo,
-          archivoLink: subida.link, descripcionOriginal: it.descripcionMaterial
-        });
-      } else {
-        pendientes.push(it);
-      }
-    });
-
-    estado.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA encontró ${extraccion.datos.items.length} producto(s) de "${proveedor || '(sin nombre)'}"` +
-      (pendientes.length ? ` — ${pendientes.length} necesita(n) asignación manual abajo` : ' — todos calzados automáticamente, revisa antes de guardar');
-
-    if (pendientes.length) {
-      window._pendientesCotizMultiple = pendientes;
-      window._proveedorCotizMultiple = proveedor;
-      window._plazoCotizMultiple = plazo;
-      window._linkCotizMultiple = subida.link;
-      revisionBox.innerHTML = pendientes.map((p, i) => `
-        <div style="border:1px solid #eee; border-radius:6px; padding:8px; margin-top:6px; font-size:12px; background:white;">
-          <b>"${(p.descripcionMaterial || '(sin descripción)').replace(/"/g,'&quot;')}"</b> — ${p.cantidad || '?'} ${p.unidad || ''} · $${p.precioUnitario || '?'}
-          <br><span style="color:#CF4520;">No calzó claro con ningún ítem de esta requisición — elige a cuál asignarlo:</span><br>
-          <select class="comp-multi-asignar" style="margin-top:4px;">
-            <option value="">-- No asignar / ignorar --</option>
-            ${comparativoItemsActuales.map(reqItem => `<option value="${reqItem['Codigo Articulo']}">${reqItem['Codigo Articulo']} — ${reqItem['Descripcion']}</option>`).join('')}
-          </select>
-          <button type="button" class="secondary" style="margin-left:6px;" onclick="asignarManualCotizacionMultiple(this, ${i})">Asignar</button>
-        </div>`).join('');
-    }
-  } catch (err) {
-    estado.textContent = '';
-    toast('Error al subir/leer el archivo: ' + err.message);
-  } finally {
-    subidasEnCurso--;
-    inputArchivo.value = '';
-  }
-}
-
-function asignarManualCotizacionMultiple(btn, idx) {
-  const select = btn.previousElementSibling;
-  const codigo = select.value;
-  if (!codigo) { toast('Elige un ítem antes de asignar.'); return; }
-  const p = window._pendientesCotizMultiple[idx];
-  agregarFilaCotizacionConDatos(codigo, {
-    proveedor: window._proveedorCotizMultiple,
-    precioUnitario: p.precioUnitario,
-    plazoEntrega: window._plazoCotizMultiple,
-    archivoLink: window._linkCotizMultiple,
-    descripcionOriginal: p.descripcionMaterial
-  });
-  btn.closest('div').remove();
-  toast('Cotización asignada a ' + codigo + '.');
 }
 
 async function enviarComparativo() {
@@ -923,7 +746,6 @@ async function poblarSelectorRequisicionesOC() {
   select.innerHTML = '<option value="">-- Elige una requisición en cotización --</option>' +
     opciones.map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
-  if (actual) cargarRequisicionEnOC();
   const aviso = document.getElementById('oc-aviso-vacio');
   if (aviso) aviso.style.display = opciones.length ? 'none' : 'block';
 }
@@ -1215,7 +1037,6 @@ async function poblarSelectorRequisicionesBodega() {
   select.innerHTML = '<option value="">-- Elige una requisición pendiente --</option>' +
     (res.data || []).map(r => `<option value="${r['N Requisicion']}">${r['N Requisicion']} — ${r['Obra'] || ''} (${r['Criticidad']})</option>`).join('');
   select.value = actual;
-  if (actual) cargarRequisicionEnBodega();
 }
 
 async function cargarRequisicionEnBodega() {
@@ -1260,7 +1081,11 @@ async function enviarRevisionDisponibilidad() {
     const res = await callBackend('revisarDisponibilidad', { nRequisicion: nReq, usuario: currentUser, items });
     if (res.ok) {
       toast('Disponibilidad guardada. El stock asignado ya se rebajó del Inventario Bodega.');
-      cargarRequisicionEnBodega();
+      // Limpia la pantalla para evitar confusión y una segunda carga
+      document.getElementById('bodega-select-req').value = '';
+      document.getElementById('bodega-tabla-items').innerHTML = '';
+      document.getElementById('bodega-info-req').textContent = '';
+      poblarSelectorRequisicionesBodega();
     } else {
       toast('Error: ' + res.error);
     }
