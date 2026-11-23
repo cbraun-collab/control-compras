@@ -219,6 +219,14 @@
         </table>
       </div>
       <div class="card">
+        <h3>Proveedores por validar</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Proveedores y datos que la app sacó de cotizaciones. Los valida
+          Luis Miranda, Carlos Braun o Claudia Menéndez revisando el documento de origen; se pueden corregir antes de validar.
+          Sin validar, no se le pueden enviar solicitudes de cotización ni emitir OC.</p>
+        <button class="secondary" onclick="cargarProveedoresPorValidar()">Actualizar</button>
+        <div id="lista-proveedores-validar"></div>
+      </div>
+      <div class="card">
         <h3>Reservas activas</h3>
         <button class="secondary" onclick="cargarReservas()">Actualizar</button>
         <table id="tabla-reservas">
@@ -396,7 +404,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
     if (btn.dataset.view === 'seguimiento') {
-      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarStockCritico(); cargarPresupuesto();
+      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarStockCritico(); cargarPresupuesto();
     }
     if (btn.dataset.view === 'comparativo') {
       poblarSelectorRequisicionesComparativo();
@@ -764,10 +772,13 @@ function agregarFilaCotizacion(btn, codigo) {
 
     // Extracción automática — solo propone, el usuario siempre confirma/edita antes de guardar
     if (archivo.type === 'application/pdf' || archivo.type.startsWith('image/')) {
-      const extraccion = await callBackend('extraerDatosCotizacion', { base64Content, mimeType: archivo.type });
+      const extraccion = await callBackend('extraerDatosCotizacion', { base64Content, mimeType: archivo.type, nombreArchivo: archivo.name, fileId: subida.fileId, usuario: currentUser });
       if (extraccion.ok) {
         const d = extraccion.datos;
-        if (d.proveedor) { buscador.value = d.proveedor; div.querySelector('.comp-proveedor').value = d.proveedor; }
+        const nombreProv = (d.registroProveedor && d.registroProveedor.nombre) || d.proveedor;
+        if (nombreProv) { buscador.value = nombreProv + (d.rut ? ` (${d.rut})` : ''); div.querySelector('.comp-proveedor').value = nombreProv; }
+        Object.assign(div.dataset, { rut: d.rut || '', direccion: d.direccion || '', telefonoEmpresa: d.telefono || '',
+          nombreVendedor: d.vendedor || '', correoVendedor: d.correoVendedor || '', telefonoVendedor: d.telefonoVendedor || '' });
         if (d.precioUnitario) div.querySelector('.comp-precio').value = d.precioUnitario;
         if (d.plazoEntrega) div.querySelector('.comp-plazo').value = d.plazoEntrega;
         div.dataset.cargos = Number(d.cargosAdicionales) > 0 ? d.cargosAdicionales : '';
@@ -786,7 +797,7 @@ function agregarFilaCotizacion(btn, codigo) {
         if (d.descuento && d.precioLista) extras += `<br><span style="color:#555;">Precio con descuento: lista ${pesos(d.precioLista)} − ${esc(d.descuento)}</span>`;
         if (Number(d.cargosAdicionales) > 0) extras += `<br><span style="color:#CF4520; font-weight:bold;">💲 Cobra aparte ${pesos(d.cargosAdicionales)} neto${d.detalleCargos ? ' (' + esc(d.detalleCargos) + ')' : ''}. Tenlo en cuenta al comparar.</span>`;
         if (d.condicionPago) extras += `<br><span style="color:#555;">Pago: ${esc(d.condicionPago)}</span>`;
-        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${extras}${avisoDescripcion}`;
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${extras}${textoRegistroProveedor(d.registroProveedor, d)}${avisoDescripcion}`;
       } else {
         estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente` +
           (extraccion.error ? `<br><span style="color:#c0392b;">Motivo: ${String(extraccion.error).replace(/</g, '&lt;')}</span>` : '');
@@ -1010,6 +1021,17 @@ function elegirGanadores(pendientes, todas) {
   });
 }
 
+function textoRegistroProveedor(reg, d) {
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (!reg || !reg.estado || reg.estado === 'sin datos') return '';
+  const bloqueo = 'Hasta que lo valide Luis Miranda, Carlos Braun o Claudia Menéndez no se le pueden enviar solicitudes de cotización ni emitir OC. Ya se les avisó por correo.';
+  if (reg.estado === 'nuevo') return `<br><span style="color:#b9770e;font-weight:bold">⏳ Proveedor nuevo registrado${d.rut ? ' (RUT ' + esc(d.rut) + ')' : ''}, <u>por validar</u>.</span> <span style="color:#b9770e">${bloqueo}</span>`;
+  if (reg.validacion === 'RECHAZADO') return '<br><span style="color:#c0392b;font-weight:bold">⛔ Este proveedor fue rechazado en la validación: no se le puede comprar.</span>';
+  if (reg.validacion === 'PENDIENTE') return `<br><span style="color:#b9770e;font-weight:bold">⏳ Proveedor registrado pero aún por validar.</span> <span style="color:#b9770e">${bloqueo}</span>`;
+  if (reg.estado === 'datos por validar') return `<br><span style="color:#b9770e">✓ Proveedor validado. El documento trae datos nuevos (${(reg.propuestos || []).map(esc).join(', ')}) que quedaron por validar; no se usan hasta entonces.</span>`;
+  return '<br><span style="color:#27ae60">✓ Proveedor validado.</span>';
+}
+
 /* ---------------- Cotización de un proveedor con varios productos ---------------- */
 let cargosPorProveedor = {}; // { proveedor: {monto, detalle} } — el flete se cuenta una vez por proveedor
 
@@ -1039,13 +1061,14 @@ async function adjuntarCotizacionProveedor(input) {
     const subida = await callBackend('subirCotizacion', { nRequisicion: nReq, nombreArchivo: archivo.name, mimeType: archivo.type, base64Content });
     if (!subida.ok) { caja.innerHTML = '<span style="color:#c0392b">Error al subir: ' + esc(subida.error) + '</span>'; return; }
     caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <b>⏳ La IA está leyendo los ${items.length} productos (unos 20 segundos)…</b>`;
-    const ex = await callBackend('extraerCotizacionMultiple', { base64Content, mimeType: archivo.type, items });
+    const ex = await callBackend('extraerCotizacionMultiple', { base64Content, mimeType: archivo.type, items, nombreArchivo: archivo.name, fileId: subida.fileId, usuario: currentUser });
     if (!ex.ok) {
       caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <span style="color:#c0392b">La IA no pudo leer el archivo: ${esc(ex.error)}</span><br>Agrega las filas a mano en cada producto.`;
       return;
     }
     const d = ex.datos;
-    const proveedor = (d.proveedor || archivo.name).trim();
+    // Se usa el nombre con que el proveedor quedó guardado, para que la OC lo encuentre
+    const proveedor = ((d.registroProveedor && d.registroProveedor.nombre) || d.proveedor || archivo.name).trim();
     // Si se vuelve a adjuntar el mismo proveedor, se reemplazan sus filas anteriores
     document.querySelectorAll('.comp-proveedores-lista .itemRow').forEach(r => { if (r.dataset.proveedorArchivo === proveedor) r.remove(); });
     [...resumen.children].forEach(c => { if (c !== caja && c.dataset.proveedor === proveedor) c.remove(); });
@@ -1062,6 +1085,9 @@ async function adjuntarCotizacionProveedor(input) {
       row.dataset.proveedorArchivo = proveedor;
       row.dataset.respaldoLink = subida.link;
       row.dataset.rut = d.rut || '';
+      row.dataset.direccion = d.direccion || ''; row.dataset.telefonoEmpresa = d.telefono || '';
+      row.dataset.nombreVendedor = d.vendedor || ''; row.dataset.correoVendedor = d.correoVendedor || '';
+      row.dataset.telefonoVendedor = d.telefonoVendedor || '';
       row.dataset.nota = l.nota || '';
       row.dataset.calce = l.calce || 'alta';
       row.querySelector('.comp-proveedor-buscador').value = proveedor + (d.rut ? ` (${d.rut})` : '');
@@ -1083,6 +1109,7 @@ async function adjuntarCotizacionProveedor(input) {
       Cotizó <b>${cotizados.size} de ${items.length}</b> productos · <a href="${subida.link}" target="_blank">Ver archivo</a>
       · Plazo: ${esc(d.plazoEntrega || '¿?')} (${llegaATiempo(d.plazoEntrega) ? '<span style="color:#27ae60">llega a tiempo</span>' : '<span style="color:#c0392b">no llega a tiempo o sin dato</span>'})
       ${d.condicionPago ? ' · Pago: ' + esc(d.condicionPago) : ''}
+      ${textoRegistroProveedor(d.registroProveedor, d)}
       ${d.descuentoGeneral ? `<br>Descuento general ${esc(d.descuentoGeneral)} ya aplicado en los precios.` : ''}
       ${Number(d.cargosAdicionales) > 0 ? `<br><span style="color:#CF4520;font-weight:bold">💲 Cobra aparte ${pesos(d.cargosAdicionales)} neto${d.detalleCargos ? ' (' + esc(d.detalleCargos) + ')' : ''}: se suma una vez al comparar.</span>` : ''}
       ${conAviso ? `<br><span style="color:#CF4520">⚠️ ${conAviso} producto(s) con aviso: revísalos en su fila.</span>` : ''}
@@ -1128,8 +1155,14 @@ async function cargarDatosProveedorOC(nombreProveedor, contenedor) {
   bloque.style.marginBottom = '10px';
   bloque.style.background = '#fafafa';
 
+  const estados = coincidencias.map(p => String(p['Estado Validacion'] || '').toUpperCase() || 'VALIDADO');
+  const sinValidar = coincidencias.length && estados.indexOf('VALIDADO') < 0;
   if (coincidencias.length === 0) {
     bloque.innerHTML = `<b style="color:var(--teal);">${nombreProveedor}</b><p style="font-size:11px; color:#c0392b;">Sin datos de contacto guardados para este proveedor todavía. La OC se emitirá sin RUT/vendedor asignado.</p>`;
+    proveedoresDetalleActuales[nombreProveedor] = {};
+  } else if (sinValidar) {
+    bloque.innerHTML = `<b style="color:var(--teal);">${nombreProveedor}</b><p style="font-size:12px; color:#c0392b; font-weight:bold;">⛔ Proveedor ${estados.indexOf('PENDIENTE') >= 0 ? 'por validar' : 'rechazado'}: no se le puede emitir OC.
+      Pide a Luis Miranda, Carlos Braun o Claudia Menéndez que lo validen en Seguimiento → «Proveedores por validar».</p>`;
     proveedoresDetalleActuales[nombreProveedor] = {};
   } else {
     const opciones = coincidencias.map((p, i) =>
@@ -1288,7 +1321,8 @@ function renderTablaRequisiciones(filas) {
       <td>${r['Obra'] || ''}</td>
       <td>${badgeCriticidad(r['Criticidad'])}</td>
       <td>${r['Estado']}</td>
-      <td><button class="secondary" onclick="verDocumentosAsociados('${r['N Requisicion']}')" style="font-size:11px; padding:4px 8px;">Ver documentos</button></td>
+      <td><button class="secondary" onclick="verDocumentosAsociados('${r['N Requisicion']}')" style="font-size:11px; padding:4px 8px;">Ver documentos</button>
+        <button class="secondary" onclick="eliminarDocumentoUI('REQ', '${r['N Requisicion']}', this)" style="font-size:11px; padding:4px 8px; color:#c0392b; border-color:#c0392b;">🗑 Eliminar</button></td>
     </tr>`).join('');
   document.getElementById('panel-documentos-asociados').style.display = 'none';
 }
@@ -1349,6 +1383,7 @@ function renderTablaOC(filas) {
           <option value="">--</option>
           ${estadosSiguientes.map(e => `<option value="${e}">${e}</option>`).join('')}
         </select>
+        <button class="secondary" onclick="eliminarDocumentoUI('OC', '${r['N OC']}', this)" style="font-size:11px; padding:4px 8px; color:#c0392b; border-color:#c0392b;">🗑 Eliminar</button>
       </td>
     </tr>`).join('');
 }
@@ -1370,6 +1405,69 @@ async function cambiarEstadoOC(nOC, estadoNuevo) {
   const res = await callBackend('actualizarEstadoOC', { nOC, estadoNuevo, usuario: currentUser });
   toast(res.ok ? `${nOC} → ${estadoNuevo}` : 'Error: ' + res.error);
   cargarOC();
+}
+
+const CAMPOS_CONTACTO_PROV = ['RUT', 'Direccion', 'Telefono Empresa', 'Nombre Vendedor', 'Correo Vendedor', 'Telefono Vendedor'];
+// "Eliminar" anula: queda con Estado ANULADA, el motivo y quién lo hizo. No se borra la fila
+// (no se reutiliza el folio y queda la trazabilidad). Una requisición anulada libera sus reservas.
+async function eliminarDocumentoUI(tipo, numero, btn) {
+  const nombre = tipo === 'REQ' ? 'la requisición' : 'la orden de compra';
+  const motivo = prompt(`Vas a eliminar ${nombre} ${numero}.\n\nQueda anulada (no se usa más, sale de las listas${tipo === 'REQ' ? ' y se liberan sus reservas de bodega' : ''}), pero se guarda el registro con el motivo.\n\nEscribe el motivo:`, '');
+  if (motivo === null) return;
+  if (!motivo.trim()) { toast('Debes indicar un motivo.'); return; }
+  btn.disabled = true; btn.textContent = 'Eliminando...';
+  try {
+    const res = await callBackend('anularDocumento', { tipo, numero, motivo, usuario: currentUser });
+    if (!res.ok) { toast('No se eliminó: ' + res.error); return; }
+    toast(numero + ' eliminada' + (res.reservasLiberadas ? ` · ${res.reservasLiberadas} reserva(s) liberada(s)` : '') + '.');
+    cargarRequisiciones(); cargarOC(); cargarReservas();
+  } finally { btn.disabled = false; btn.textContent = '🗑 Eliminar'; }
+}
+
+async function cargarProveedoresPorValidar() {
+  const caja = document.getElementById('lista-proveedores-validar');
+  const res = await callBackend('listarProveedoresPorValidar', {});
+  if (!res.ok) { caja.innerHTML = '<p style="color:#c0392b">Error: ' + res.error + '</p>'; return; }
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const puede = (res.validadores || []).indexOf(String(currentUser || '').toLowerCase()) >= 0;
+  if (!res.data.length) { caja.innerHTML = '<p style="color:#888; font-size:12px;">No hay proveedores por validar.</p>'; return; }
+  caja.innerHTML = (puede ? '' : '<p style="font-size:12px;color:#b9770e">Puedes ver la lista, pero solo Luis Miranda, Carlos Braun o Claudia Menéndez pueden validar.</p>') +
+    res.data.map((p, idx) => {
+      const nuevo = String(p['Estado Validacion'] || '').toUpperCase() === 'PENDIENTE';
+      const prop = (p.propuestos && p.propuestos.campos) || {};
+      const doc = nuevo ? p['Documento Origen'] : (p.propuestos && p.propuestos.documento);
+      return `<div class="prov-validar" data-nombre="${esc(p['Nombre Proveedor'])}" style="border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px">
+        <b>${esc(p['Nombre Proveedor'])}</b> — ${nuevo ? '<span style="color:#b9770e">proveedor nuevo</span>' : '<span style="color:#b9770e">datos nuevos para un proveedor ya validado</span>'}
+        <br><span style="color:#777">Cargado por ${esc(nuevo ? p['Registrado Por'] : (p.propuestos && p.propuestos.por))} el ${esc(nuevo ? p['Fecha Registro'] : (p.propuestos && p.propuestos.fecha))}</span>
+        · ${doc ? `<a href="${esc(doc)}" target="_blank"><b>Ver documento de origen</b></a>` : '<span style="color:#c0392b">sin copia del documento</span>'}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;margin-top:6px">
+          ${CAMPOS_CONTACTO_PROV.map(k => {
+            const valor = prop[k] !== undefined ? prop[k] : (p[k] || '');
+            const marca = prop[k] !== undefined ? ' style="border-color:#b9770e;background:#fff8ec"' : '';
+            return `<label style="font-size:11px;margin:0">${k}${prop[k] !== undefined ? ' <b style="color:#b9770e">(nuevo)</b>' : ''}<input data-campo="${k}" value="${esc(valor)}"${marca} ${puede ? '' : 'disabled'}></label>`;
+          }).join('')}
+        </div>
+        ${puede ? `<div style="display:flex;gap:8px;margin-top:6px">
+          <button type="button" onclick="decidirProveedor(this,'VALIDAR')" style="width:auto;margin:0">✓ Validar</button>
+          <button type="button" class="secondary" onclick="decidirProveedor(this,'RECHAZAR')" style="width:auto;margin:0">Rechazar</button></div>` : ''}
+      </div>`;
+    }).join('');
+}
+
+async function decidirProveedor(btn, decision) {
+  const caja = btn.closest('.prov-validar');
+  const nombre = caja.dataset.nombre;
+  let motivo = '';
+  if (decision === 'RECHAZAR') {
+    motivo = prompt('¿Por qué se rechaza ' + nombre + '? (queda anotado)', '');
+    if (motivo === null) return;
+  } else if (!confirm('¿Validar ' + nombre + ' con estos datos? Revisaste el documento de origen.')) return;
+  const datos = {};
+  caja.querySelectorAll('[data-campo]').forEach(i => { datos[i.dataset.campo] = i.value; });
+  caja.querySelectorAll('button').forEach(b => b.disabled = true);
+  const res = await callBackend('validarProveedor', { nombre, decision, usuario: currentUser, motivo, datos });
+  toast(res.ok ? (decision === 'VALIDAR' ? nombre + ' validado.' : nombre + ' rechazado.') : 'Error: ' + res.error);
+  cargarProveedoresPorValidar();
 }
 
 async function cargarReservas() {
