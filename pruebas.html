@@ -760,7 +760,13 @@ function agregarFilaCotizacion(btn, codigo) {
             avisoDescripcion = `<br><span style="color:#CF4520; font-weight:bold;">⚠️ El documento dice "${d.descripcionMaterial}" — no calza claramente con "${itemEsperado['Descripcion']}" que pediste. Verifica que sea el material correcto antes de guardar.</span>`;
           }
         }
-        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${avisoDescripcion}`;
+        const esc = t => String(t).replace(/</g, '&lt;');
+        const pesos = n => '$' + Number(n).toLocaleString('es-CL');
+        let extras = '';
+        if (d.descuento && d.precioLista) extras += `<br><span style="color:#555;">Precio con descuento: lista ${pesos(d.precioLista)} − ${esc(d.descuento)}</span>`;
+        if (Number(d.cargosAdicionales) > 0) extras += `<br><span style="color:#CF4520; font-weight:bold;">💲 Cobra aparte ${pesos(d.cargosAdicionales)} neto${d.detalleCargos ? ' (' + esc(d.detalleCargos) + ')' : ''}. Tenlo en cuenta al comparar.</span>`;
+        if (d.condicionPago) extras += `<br><span style="color:#555;">Pago: ${esc(d.condicionPago)}</span>`;
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${extras}${avisoDescripcion}`;
       } else {
         estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente` +
           (extraccion.error ? `<br><span style="color:#c0392b;">Motivo: ${String(extraccion.error).replace(/</g, '&lt;')}</span>` : '');
