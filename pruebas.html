@@ -137,12 +137,23 @@
         <p style="font-size:11px; color:#777; margin-top:4px;">Solo aparecen las requisiciones que Bodega ya revisó.</p>
         <div id="comp-info-req" style="font-size:12px; color:#777; margin-top:6px;"></div>
 
+        <h4 style="margin-top:16px;">Cotizaciones por proveedor</h4>
+        <p style="font-size:12px; color:#555; margin:4px 0 8px;">
+          Si un proveedor mandó <b>un solo archivo con varios productos</b>, adjúntalo aquí una vez:
+          la IA lee todos los productos y llena la fila de cada uno. Revisa los avisos en naranjo antes de guardar.
+        </p>
+        <label class="secondary" style="display:inline-flex; align-items:center; gap:8px; padding:10px 16px; cursor:pointer; font-size:15px; font-weight:bold; border-width:2px; margin:0;">
+          <span style="font-size:24px;">📎</span> Adjuntar cotización de un proveedor
+          <input type="file" id="comp-archivo-multiple" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" onchange="adjuntarCotizacionProveedor(this)">
+        </label>
+        <div id="comp-proveedores-resumen" style="margin-top:8px;"></div>
+
         <h4 style="margin-top:16px;">Cotizaciones por ítem</h4>
         <div id="comp-items"></div>
         <p style="font-size:11px; color:#777; margin-top:8px;">
-          Agrega una fila por cada cotización de proveedor para cada ítem de la requisición.
-          El sistema marca el <b>ganador automáticamente por menor precio</b>; puedes cambiarlo
-          manualmente marcando otro antes de guardar.
+          También puedes agregar filas a mano, una por proveedor en cada ítem. Al guardar, gana la
+          cotización <b>más barata si llega a tiempo</b> a la fecha necesaria en obra; si no llega, la app
+          te muestra un resumen para que elijas.
         </p>
         <button class="primary" id="btn-guardar-comparativo" onclick="enviarComparativo()">Guardar Comparativo</button>
       </div>
@@ -282,9 +293,11 @@ const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerR
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
   'obtenerDocumentosAsociados', 'listarReservas']);
 
-// Acciones que envían archivos: van por POST, porque un PDF en base64 no cabe en la
-// dirección de una llamada JSONP (daba "Error de red llamando a subirCotizacion").
-const ACCIONES_POST = new Set(['subirCotizacion', 'extraerDatosCotizacion']);
+// Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
+// un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
+// comparativo de 20 productos x 3 proveedores tampoco ("... guardarComparativo", 23-11-2026).
+// Las lecturas siguen por JSONP con reintento.
+const ACCIONES_POST = { has: action => !ACCIONES_LECTURA.has(action) };
 
 async function llamarBackendPost(action, payload) {
   const cuerpo = new URLSearchParams({ action, payload: JSON.stringify(payload || {}) });
@@ -581,6 +594,8 @@ async function cargarRequisicionEnComparativo() {
   contenedor.innerHTML = '';
   info.textContent = '';
   comparativoItemsActuales = [];
+  cargosPorProveedor = {};
+  document.getElementById('comp-proveedores-resumen').innerHTML = '';
   if (!nReq) return;
 
   const res = await callBackend('obtenerRequisicion', { nRequisicion: nReq });
@@ -589,6 +604,8 @@ async function cargarRequisicionEnComparativo() {
   info.textContent = `Centro de Costo: ${res.encabezado['Centro de Costo']} · Obra: ${res.encabezado['Obra']} · Criticidad: ${res.encabezado['Criticidad']}`;
   comparativoItemsActuales = res.items;
   comparativoFechaNecesaria = res.encabezado['Fecha Necesaria'] ? new Date(res.encabezado['Fecha Necesaria']) : null;
+  cargosPorProveedor = {};
+  document.getElementById('comp-proveedores-resumen').innerHTML = '';
 
   res.items.forEach((item, idx) => {
     const pedido = Number(item['Cantidad']) || 0;
@@ -805,8 +822,11 @@ async function enviarComparativo() {
       const plazoEntrega = row.querySelector('.comp-plazo').value;
       const respaldoLink = row.dataset.respaldoLink || '';
       if (proveedor && precioUnitario) {
+        const cp = cargosPorProveedor[proveedor];
         cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega, respaldoLink,
-          cargos: row.dataset.cargos || '', detalleCargos: row.dataset.detalleCargos || '' });
+          cargos: cp ? cp.monto : (row.dataset.cargos || ''),
+          detalleCargos: cp ? cp.detalle : (row.dataset.detalleCargos || ''),
+          nota: row.dataset.nota || '', calce: row.dataset.calce || 'alta' });
       }
     });
   });
@@ -815,20 +835,28 @@ async function enviarComparativo() {
 
   // Regla de Carlos (23-11-2026): si la cotización más barata no llega a tiempo a la
   // fecha necesaria en obra (o su plazo no se entiende), la app no elige sola: pregunta.
+  // Con muchos productos se muestra UNA sola ventana con todos los que necesitan decisión.
   const notas = [];
+  const pendientes = [];
   for (const codigo of [...new Set(cotizaciones.map(c => c.codigo))]) {
     const delItem = cotizaciones.filter(c => c.codigo === codigo);
     const masBarata = delItem.reduce((a, c) => Number(c.precioUnitario) < Number(a.precioUnitario) ? c : a);
-    const llegada = fechaLlegadaEstimada(masBarata.plazoEntrega);
-    const aTiempo = llegada && comparativoFechaNecesaria && llegada <= finDelDia(comparativoFechaNecesaria);
-    if (aTiempo) continue;
-    const elegida = await elegirGanador(codigo, delItem, masBarata);
-    if (!elegida) { toast('No se guardó: falta elegir el ganador de ' + codigo + '.'); return; }
-    delItem.forEach(c => { c.ganadorManual = (c === elegida); });
-    notas.push(codigo + ': ganador elegido por ' + currentUser + ' -> ' + elegida.proveedor +
-      (elegida !== masBarata ? ' (la más barata, ' + masBarata.proveedor + ', no llegaba a tiempo)' : ' (la más barata, aceptando su plazo)'));
+    const tarde = !llegaATiempo(masBarata.plazoEntrega);
+    const conAviso = !!masBarata.nota || (masBarata.calce && masBarata.calce !== 'alta');
+    if (tarde || conAviso) pendientes.push({ codigo, delItem, masBarata, tarde, conAviso });
   }
-  cotizaciones.forEach(c => { delete c.cargos; delete c.detalleCargos; });
+  if (pendientes.length) {
+    const eleccion = await elegirGanadores(pendientes, cotizaciones);
+    if (!eleccion) { toast('No se guardó: falta confirmar los ganadores.'); return; }
+    const cambios = [];
+    pendientes.forEach(p => {
+      const elegida = eleccion.get(p.codigo);
+      p.delItem.forEach(c => { c.ganadorManual = (c === elegida); });
+      cambios.push(p.codigo + '→' + elegida.proveedor + (elegida === p.masBarata ? ' (más barata, plazo aceptado)' : ''));
+    });
+    notas.push('Ganadores elegidos por ' + currentUser + ' (la más barata no llegaba a tiempo o tenía un aviso): ' + cambios.join('; '));
+  }
+  cotizaciones.forEach(c => { delete c.cargos; delete c.detalleCargos; delete c.nota; delete c.calce; });
 
   btn.disabled = true;
   const textoOriginal = btn.textContent;
@@ -866,48 +894,212 @@ function fechaLlegadaEstimada(plazo) {
 }
 function fechaCorta(d) { return d ? d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }) : '¿?'; }
 
-// Muestra las cotizaciones de un ítem y pide elegir el ganador. Devuelve la elegida o null.
-function elegirGanador(codigo, delItem, masBarata) {
+function llegaATiempo(plazo) {
+  const lleg = fechaLlegadaEstimada(plazo);
+  return !!(lleg && comparativoFechaNecesaria && lleg <= finDelDia(comparativoFechaNecesaria));
+}
+function saldoDe(codigo) {
+  const it = comparativoItemsActuales.find(x => x['Codigo Articulo'] === codigo) || {};
+  return Math.max(0, (Number(it['Cantidad']) || 0) - (Number(it['Cantidad Disponible Stock']) || 0));
+}
+
+// Ventana única: una fila por producto que necesita decisión y una columna por proveedor.
+// Muestra precio, plazo/llegada, avisos de la IA y el total por proveedor (con flete una
+// sola vez). Devuelve Map(codigo -> cotización elegida), o null si se cancela.
+function elegirGanadores(pendientes, todas) {
   return new Promise(resolve => {
-    const esc = t => String(t).replace(/</g, '&lt;');
-    const pesos = n => '$' + Number(n).toLocaleString('es-CL');
-    const item = comparativoItemsActuales.find(it => it['Codigo Articulo'] === codigo) || {};
+    const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const pesos = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
     const necesaria = comparativoFechaNecesaria;
-    const ordenadas = [...delItem].sort((a, b) => Number(a.precioUnitario) - Number(b.precioUnitario));
+    const proveedores = [...new Set(todas.map(c => c.proveedor))];
+    const infoProv = {};
+    proveedores.forEach(p => {
+      const c = todas.find(x => x.proveedor === p);
+      infoProv[p] = { plazo: c.plazoEntrega, lleg: fechaLlegadaEstimada(c.plazoEntrega), ok: llegaATiempo(c.plazoEntrega),
+                      flete: Number(c.cargos) || 0, detalle: c.detalleCargos || '' };
+    });
+    // Productos donde la más barata sí llega: quedan fijos y suman al total
+    const codPend = new Set(pendientes.map(p => p.codigo));
+    const fijos = [];
+    [...new Set(todas.map(c => c.codigo))].filter(c => !codPend.has(c)).forEach(codigo => {
+      const del = todas.filter(c => c.codigo === codigo);
+      fijos.push(del.reduce((a, c) => Number(c.precioUnitario) < Number(a.precioUnitario) ? c : a));
+    });
+    const eleccion = new Map();
+
     const fondo = document.createElement('div');
-    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px';
-    fondo.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:18px;font-size:13px">
-      <h3 style="margin:0 0 6px;color:#CF4520">Elige el ganador — ${esc(codigo)}</h3>
-      <div style="color:#555;margin-bottom:10px">${esc(item['Descripcion'] || '')}<br>
-        Se necesita en obra el <b>${necesaria ? necesaria.toLocaleDateString('es-CL') : '(sin fecha)'}</b>.
-        ${fechaLlegadaEstimada(masBarata.plazoEntrega)
-          ? `La más barata (${esc(masBarata.proveedor)}) <b>no llega a tiempo</b>.`
-          : `No se entiende el plazo de la más barata (${esc(masBarata.proveedor)}).`}</div>
-      ${ordenadas.map((c, i) => {
-        const lleg = fechaLlegadaEstimada(c.plazoEntrega);
-        const ok = lleg && necesaria && lleg <= finDelDia(necesaria);
-        return `<label style="display:block;border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;cursor:pointer">
-          <input type="radio" name="elige-ganador" value="${delItem.indexOf(c)}" style="width:auto;margin-right:6px">
-          <b>${esc(c.proveedor)}</b> — ${pesos(c.precioUnitario)} c/u${i === 0 ? ' <span style="color:#27ae60">(más barata)</span>' : ''}
-          ${Number(c.cargos) > 0 ? `<br><span style="color:#CF4520">+ ${pesos(c.cargos)} ${esc(c.detalleCargos || 'cargos aparte')}</span>` : ''}
-          <br><span style="color:${ok ? '#27ae60' : '#c0392b'}">Plazo: ${esc(c.plazoEntrega || '(sin plazo)')} → llega aprox. ${fechaCorta(lleg)} ${ok ? '✓ a tiempo' : '✗ tarde o sin dato'}</span>
-        </label>`; }).join('')}
-      <div style="font-size:11px;color:#777;margin:6px 0 10px">Días hábiles = lunes a viernes, sin descontar feriados. Es una estimación.</div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="secondary" data-accion="cancelar" style="width:auto;margin:0">Cancelar</button>
-        <button data-accion="ok" style="width:auto;margin:0">Confirmar ganador</button>
+    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;display:flex;align-items:center;justify-content:center;padding:10px';
+    const cab = proveedores.map(p => `<th style="min-width:130px;vertical-align:top;font-size:11px;background:#f4f4f4;color:#222;">
+        <b>${esc(p)}</b><br><span style="color:${infoProv[p].ok ? '#27ae60' : '#c0392b'}">${esc(infoProv[p].plazo || 'sin plazo')}<br>llega aprox. ${fechaCorta(infoProv[p].lleg)} ${infoProv[p].ok ? '✓' : '✗'}</span>
+        ${infoProv[p].flete ? `<br><span style="color:#CF4520">+ flete ${pesos(infoProv[p].flete)}</span>` : ''}
+        <br><button type="button" class="secondary" data-todo="${esc(p)}" style="width:auto;margin:4px 0 0;padding:2px 6px;font-size:10px">Elegir todo aquí</button></th>`).join('');
+    const filas = pendientes.map(pd => {
+      const it = comparativoItemsActuales.find(x => x['Codigo Articulo'] === pd.codigo) || {};
+      const celdas = proveedores.map(p => {
+        const c = pd.delItem.find(x => x.proveedor === p);
+        if (!c) return '<td style="color:#bbb;text-align:center;font-size:11px">no cotizó</td>';
+        const barata = c === pd.masBarata;
+        return `<td style="font-size:11px;cursor:pointer" data-celda="${esc(pd.codigo)}|${esc(p)}">
+          <label style="cursor:pointer;display:block"><input type="radio" name="g-${esc(pd.codigo)}" value="${esc(p)}" style="width:auto;margin:0 4px 0 0">
+          ${pesos(c.precioUnitario)}${barata ? ' <span style="color:#27ae60">más barata</span>' : ''}
+          ${c.nota ? `<br><span style="color:#CF4520">⚠️ ${esc(c.nota)}</span>` : ''}</label></td>`;
+      }).join('');
+      return `<tr><td style="font-size:11px;min-width:160px"><b>${esc(pd.codigo)}</b><br>${esc(it['Descripcion'] || '')}<br><span style="color:#777">a comprar: ${saldoDe(pd.codigo)} ${esc(it['Unidad'] || '')}</span>
+        <br><span style="color:#c0392b">${[pd.tarde ? 'la más barata no llega' : '', pd.conAviso ? 'la más barata tiene aviso' : ''].filter(Boolean).join(' · ')}</span></td>${celdas}</tr>`;
+    }).join('');
+    fondo.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:96vw;width:1100px;max-height:94vh;display:flex;flex-direction:column;padding:14px;font-size:13px">
+      <h3 style="margin:0 0 4px;color:#CF4520">Elige los ganadores (${pendientes.length} producto${pendientes.length === 1 ? '' : 's'})</h3>
+      <div style="color:#555;font-size:12px;margin-bottom:8px">Se necesita en obra el <b>${necesaria ? necesaria.toLocaleDateString('es-CL') : '(sin fecha)'}</b>.
+        En estos productos la cotización más barata <b>no llega a tiempo</b> o <b>tiene un aviso</b> (otra marca, unidad o medida).
+        ${fijos.length ? `Los otros ${fijos.length} productos ya quedaron con la más barata, que llega a tiempo y sin avisos.` : ''}
+        Llegada estimada: días hábiles de lunes a viernes, sin feriados.</div>
+      <div style="overflow:auto;flex:1;border:1px solid #eee">
+        <table style="margin:0"><thead style="position:sticky;top:0;background:#fafafa;z-index:1"><tr><th style="background:#f4f4f4;color:#222;">Producto</th>${cab}</tr></thead>
+        <tbody>${filas}</tbody>
+        <tfoot style="position:sticky;bottom:0;background:#fff8f3"><tr><td style="font-size:11px"><b>Total neto por proveedor</b><br><span style="color:#777">con lo elegido, más lo ya asignado y el flete</span></td>
+          ${proveedores.map(p => `<td data-total="${esc(p)}" style="font-size:12px;font-weight:bold"></td>`).join('')}</tr></tfoot></table>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <span data-resumen style="font-size:12px;color:#555"></span>
+        <span style="display:flex;gap:8px">
+          <button class="secondary" data-accion="cancelar" style="width:auto;margin:0">Cancelar</button>
+          <button data-accion="ok" style="width:auto;margin:0">Confirmar ganadores</button></span>
       </div></div>`;
     document.body.appendChild(fondo);
+
+    function recalcular() {
+      const totales = {}; const usados = new Set();
+      const sumar = c => { totales[c.proveedor] = (totales[c.proveedor] || 0) + Number(c.precioUnitario) * saldoDe(c.codigo); usados.add(c.proveedor); };
+      fijos.forEach(sumar);
+      eleccion.forEach(sumar);
+      let gran = 0;
+      proveedores.forEach(p => {
+        const t = (totales[p] || 0) + (usados.has(p) ? infoProv[p].flete : 0);
+        gran += t;
+        fondo.querySelector(`[data-total="${CSS.escape(p)}"]`).textContent = usados.has(p) ? pesos(t) : '—';
+      });
+      fondo.querySelectorAll('[data-celda]').forEach(td => {
+        const [cod, p] = td.dataset.celda.split('|');
+        td.style.background = eleccion.get(cod) && eleccion.get(cod).proveedor === p ? '#e8f6ee' : '';
+      });
+      const faltan = pendientes.length - eleccion.size;
+      fondo.querySelector('[data-resumen]').innerHTML = (faltan ? `<b style="color:#c0392b">Faltan ${faltan}</b> · ` : '<b style="color:#27ae60">Todos elegidos</b> · ') + 'Total de la compra: <b>' + pesos(gran) + '</b> neto';
+    }
+    function elegir(codigo, proveedor) {
+      const pd = pendientes.find(x => x.codigo === codigo);
+      const c = pd && pd.delItem.find(x => x.proveedor === proveedor);
+      if (!c) return;
+      eleccion.set(codigo, c);
+      const r = fondo.querySelector(`input[name="g-${CSS.escape(codigo)}"][value="${CSS.escape(proveedor)}"]`);
+      if (r) r.checked = true;
+    }
+    fondo.addEventListener('change', e => {
+      if (e.target.type === 'radio') { elegir(e.target.name.slice(2), e.target.value); recalcular(); }
+    });
     fondo.addEventListener('click', e => {
-      const accion = e.target.dataset && e.target.dataset.accion;
+      const t = e.target;
+      if (t.dataset && t.dataset.todo) { pendientes.forEach(pd => elegir(pd.codigo, t.dataset.todo)); recalcular(); return; }
+      const accion = t.dataset && t.dataset.accion;
       if (accion === 'cancelar') { fondo.remove(); resolve(null); }
       if (accion === 'ok') {
-        const sel = fondo.querySelector('input[name="elige-ganador"]:checked');
-        if (!sel) { toast('Marca un proveedor.'); return; }
-        fondo.remove(); resolve(delItem[Number(sel.value)]);
+        if (eleccion.size < pendientes.length) { toast('Falta elegir el ganador de ' + (pendientes.length - eleccion.size) + ' producto(s).'); return; }
+        fondo.remove(); resolve(eleccion);
       }
     });
+    recalcular();
   });
+}
+
+/* ---------------- Cotización de un proveedor con varios productos ---------------- */
+let cargosPorProveedor = {}; // { proveedor: {monto, detalle} } — el flete se cuenta una vez por proveedor
+
+async function adjuntarCotizacionProveedor(input) {
+  const archivo = input.files[0];
+  input.value = '';
+  if (!archivo) return;
+  const nReq = document.getElementById('comp-select-req').value;
+  if (!nReq) { toast('Selecciona una requisición primero.'); return; }
+  const items = comparativoItemsActuales
+    .map(it => ({ codigo: it['Codigo Articulo'], descripcion: it['Descripcion'], cantidad: saldoDe(it['Codigo Articulo']), unidad: it['Unidad'] }))
+    .filter(it => it.cantidad > 0);
+  if (!items.length) { toast('Esta requisición no tiene productos por cotizar.'); return; }
+
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const pesos = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
+  const resumen = document.getElementById('comp-proveedores-resumen');
+  const caja = document.createElement('div');
+  caja.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-top:6px;font-size:12px';
+  caja.innerHTML = '<b style="color:#CF4520;">⏳ Subiendo ' + esc(archivo.name) + '…</b>';
+  resumen.appendChild(caja);
+  subidasEnCurso++;
+  try {
+    const base64Content = await new Promise((ok, mal) => {
+      const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = mal; r.readAsDataURL(archivo);
+    });
+    const subida = await callBackend('subirCotizacion', { nRequisicion: nReq, nombreArchivo: archivo.name, mimeType: archivo.type, base64Content });
+    if (!subida.ok) { caja.innerHTML = '<span style="color:#c0392b">Error al subir: ' + esc(subida.error) + '</span>'; return; }
+    caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <b>⏳ La IA está leyendo los ${items.length} productos (unos 20 segundos)…</b>`;
+    const ex = await callBackend('extraerCotizacionMultiple', { base64Content, mimeType: archivo.type, items });
+    if (!ex.ok) {
+      caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <span style="color:#c0392b">La IA no pudo leer el archivo: ${esc(ex.error)}</span><br>Agrega las filas a mano en cada producto.`;
+      return;
+    }
+    const d = ex.datos;
+    const proveedor = (d.proveedor || archivo.name).trim();
+    // Si se vuelve a adjuntar el mismo proveedor, se reemplazan sus filas anteriores
+    document.querySelectorAll('.comp-proveedores-lista .itemRow').forEach(r => { if (r.dataset.proveedorArchivo === proveedor) r.remove(); });
+    [...resumen.children].forEach(c => { if (c !== caja && c.dataset.proveedor === proveedor) c.remove(); });
+    caja.dataset.proveedor = proveedor;
+    if (Number(d.cargosAdicionales) > 0) cargosPorProveedor[proveedor] = { monto: Number(d.cargosAdicionales), detalle: d.detalleCargos || '' };
+    else delete cargosPorProveedor[proveedor];
+
+    let conAviso = 0;
+    d.lineas.forEach(l => {
+      const lista = document.querySelector(`.comp-proveedores-lista[data-codigo="${CSS.escape(l.codigo)}"]`);
+      if (!lista) return;
+      agregarFilaCotizacion(lista.nextElementSibling, l.codigo);
+      const row = lista.lastElementChild;
+      row.dataset.proveedorArchivo = proveedor;
+      row.dataset.respaldoLink = subida.link;
+      row.dataset.rut = d.rut || '';
+      row.dataset.nota = l.nota || '';
+      row.dataset.calce = l.calce || 'alta';
+      row.querySelector('.comp-proveedor-buscador').value = proveedor + (d.rut ? ` (${d.rut})` : '');
+      row.querySelector('.comp-proveedor').value = proveedor;
+      row.querySelector('.comp-precio').value = Math.round(Number(l.precioUnitario) * 100) / 100;
+      row.querySelector('.comp-plazo').value = d.plazoEntrega || '';
+      const aviso = l.calce !== 'alta' || l.nota;
+      if (aviso) conAviso++;
+      row.querySelector('.comp-archivo-estado').innerHTML =
+        `De la cotización de ${esc(proveedor)} · <a href="${subida.link}" target="_blank">Ver archivo</a> · documento: «${esc(l.descripcionDocumento)}» (${esc(l.cantidad)} ${esc(l.unidadDocumento)})` +
+        (aviso ? `<br><span style="color:#CF4520;font-weight:bold">⚠️ ${l.calce !== 'alta' ? 'Calce ' + esc(l.calce) + '. ' : ''}${esc(l.nota)}</span>` : '');
+    });
+
+    const cotizados = new Set(d.lineas.map(l => l.codigo));
+    const faltan = items.filter(it => !cotizados.has(it.codigo));
+    caja.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <b>✓ ${esc(proveedor)}</b>
+        <button type="button" class="secondary" style="width:auto;margin:0;padding:2px 8px;font-size:11px">Quitar esta cotización</button></div>
+      Cotizó <b>${cotizados.size} de ${items.length}</b> productos · <a href="${subida.link}" target="_blank">Ver archivo</a>
+      · Plazo: ${esc(d.plazoEntrega || '¿?')} (${llegaATiempo(d.plazoEntrega) ? '<span style="color:#27ae60">llega a tiempo</span>' : '<span style="color:#c0392b">no llega a tiempo o sin dato</span>'})
+      ${d.condicionPago ? ' · Pago: ' + esc(d.condicionPago) : ''}
+      ${d.descuentoGeneral ? `<br>Descuento general ${esc(d.descuentoGeneral)} ya aplicado en los precios.` : ''}
+      ${Number(d.cargosAdicionales) > 0 ? `<br><span style="color:#CF4520;font-weight:bold">💲 Cobra aparte ${pesos(d.cargosAdicionales)} neto${d.detalleCargos ? ' (' + esc(d.detalleCargos) + ')' : ''}: se suma una vez al comparar.</span>` : ''}
+      ${conAviso ? `<br><span style="color:#CF4520">⚠️ ${conAviso} producto(s) con aviso: revísalos en su fila.</span>` : ''}
+      ${faltan.length ? `<br><span style="color:#777">No cotizó: ${faltan.map(x => esc(x.codigo) + ' ' + esc(x.descripcion)).join(' · ')}</span>` : ''}
+      ${d.noIdentificadas && d.noIdentificadas.length ? `<br><span style="color:#777">En el documento pero no pedido (no se usa): ${d.noIdentificadas.map(esc).join(' · ')}</span>` : ''}`;
+    caja.querySelector('button').onclick = () => {
+      document.querySelectorAll('.comp-proveedores-lista .itemRow').forEach(r => { if (r.dataset.proveedorArchivo === proveedor) r.remove(); });
+      delete cargosPorProveedor[proveedor];
+      caja.remove();
+      toast('Se quitaron las filas de ' + proveedor + '.');
+    };
+    toast(`${proveedor}: ${cotizados.size} productos cargados. Revisa los avisos antes de guardar.`);
+  } catch (err) {
+    caja.innerHTML = '<span style="color:#c0392b">Error: ' + esc(err.message || err) + '</span>';
+  } finally {
+    subidasEnCurso--;
+  }
 }
 
 /* ---------------- OC: selección de requisición, herencia de campos, ganadores automáticos ---------------- */
