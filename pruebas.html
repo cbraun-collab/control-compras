@@ -762,7 +762,8 @@ function agregarFilaCotizacion(btn, codigo) {
         }
         estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA propuso datos (certeza: ${d.certeza || '?'}) — <b>revisa antes de guardar</b>${avisoDescripcion}`;
       } else {
-        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente`;
+        estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · IA no pudo leer los datos, completa manualmente` +
+          (extraccion.error ? `<br><span style="color:#c0392b;">Motivo: ${String(extraccion.error).replace(/</g, '&lt;')}</span>` : '');
       }
     } else {
       estadoArchivo.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> guardado — completa los datos manualmente`;
