@@ -114,7 +114,7 @@
         <div id="bodega-info-req" style="font-size:12px; color:#777; margin-top:6px;"></div>
 
         <table style="margin-top:14px;">
-          <thead><tr><th>Código</th><th>Descripción</th><th>Solicitado</th><th>Stock / disponible</th><th>Cantidad a reservar</th></tr></thead>
+          <thead><tr><th>Código</th><th>Descripción</th><th>Solicitado</th><th>Stock / disponible</th><th>Cantidad a reservar</th><th>A cotizar</th></tr></thead>
           <tbody id="bodega-tabla-items"></tbody>
         </table>
         <p style="font-size:11px; color:#777; margin-top:8px;">
@@ -573,6 +573,16 @@ async function cargarRequisicionEnComparativo() {
   comparativoItemsActuales = res.items;
 
   res.items.forEach((item, idx) => {
+    const pedido = Number(item['Cantidad']) || 0;
+    const reservado = Number(item['Cantidad Disponible Stock']) || 0;
+    const saldo = Math.max(0, pedido - reservado);
+    if (saldo === 0) {
+      const nota = document.createElement('div');
+      nota.style.cssText = 'font-size:12px; color:#27ae60; margin-top:10px;';
+      nota.textContent = `${item['Codigo Articulo']} — ${item['Descripcion']}: cubierto con stock (reservado ${reservado}), no se cotiza.`;
+      contenedor.appendChild(nota);
+      return;
+    }
     const bloque = document.createElement('div');
     bloque.style.border = '1px solid #eee';
     bloque.style.borderRadius = '6px';
@@ -580,7 +590,7 @@ async function cargarRequisicionEnComparativo() {
     bloque.style.marginTop = '10px';
     bloque.innerHTML = `
       <div style="font-size:13px; font-weight:bold; color:var(--teal); margin-bottom:6px;">
-        ${item['Codigo Articulo']} — ${item['Descripcion']} (Cant: ${item['Cantidad']} ${item['Unidad']})
+        ${item['Codigo Articulo']} — ${item['Descripcion']} (A cotizar: ${saldo} ${item['Unidad']}${reservado > 0 ? ` · pedido ${pedido}, reservado en bodega ${reservado}` : ''})
       </div>
       <div class="comp-proveedores-lista" data-codigo="${item['Codigo Articulo']}"></div>
       <button class="secondary" onclick="agregarFilaCotizacion(this, '${item['Codigo Articulo']}')" type="button">+ Agregar cotización de proveedor</button>
@@ -894,7 +904,7 @@ async function cargarRequisicionEnOC() {
       <input value="${g['Proveedor']}" readonly style="background:#f0f0f0;" class="oc-item-proveedor">
       <input value="${g['Codigo Articulo']}" readonly style="background:#f0f0f0; max-width:90px;" class="oc-item-codigo">
       <input value="${detalle['Descripcion'] || ''}" readonly style="background:#f0f0f0;" class="oc-item-desc">
-      <input value="${detalle['Cantidad'] || ''}" class="oc-item-cant" style="max-width:60px">
+      <input value="${Math.max(0, (Number(detalle['Cantidad']) || 0) - (Number(detalle['Cantidad Disponible Stock']) || 0)) || ''}" class="oc-item-cant" style="max-width:60px" title="Saldo a comprar: pedido menos lo reservado en bodega">
       <input value="${detalle['Unidad'] || ''}" readonly style="background:#f0f0f0; max-width:60px;" class="oc-item-unidad">
       <input value="${g['Precio Unitario']}" readonly style="background:#f0f0f0; max-width:100px;" class="oc-item-precio">`;
     tabla.appendChild(div);
@@ -1143,10 +1153,28 @@ async function cargarRequisicionEnBodega() {
       <td>${it.descripcion}</td>
       <td>${it.cantidadSolicitada} ${it.unidad}</td>
       <td style="color:${Number(it.disponible ?? it.stockEnBodega) > 0 ? '#27ae60' : '#c0392b'};">${it.disponible ?? it.stockEnBodega} ${it.unidad} disp.<br><span style="color:#777;font-size:11px;">stock ${it.stockEnBodega}${Number(it.reservado) > 0 ? ', reservado ' + it.reservado : ''}</span></td>
-      <td><input type="number" class="bodega-item-disponible" data-codigo="${it.codigo}"
-            value="${it.cantidadDisponibleActual}" min="0" max="${it.cantidadSolicitada}" style="max-width:90px;"></td>
+      <td><input type="number" class="bodega-item-disponible" data-codigo="${it.codigo}" data-pedido="${Number(it.cantidadSolicitada) || 0}"
+            value="${it.cantidadDisponibleActual !== '' ? it.cantidadDisponibleActual : Math.min(Number(it.cantidadSolicitada) || 0, Number(it.disponible ?? it.stockEnBodega) || 0)}"
+            min="0" max="${Math.min(Number(it.cantidadSolicitada) || 0, Number(it.disponible ?? it.stockEnBodega) || 0)}" step="1" style="max-width:90px;"
+            oninput="limitarReserva(this)">
+          <div style="font-size:10px; color:#777;">máx. ${Math.min(Number(it.cantidadSolicitada) || 0, Number(it.disponible ?? it.stockEnBodega) || 0)}</div></td>
+      <td class="bodega-saldo" style="font-weight:bold; color:#CF4520;"></td>
     </tr>`).join('');
+  tbody.querySelectorAll('.bodega-item-disponible').forEach(limitarReserva);
 }
+
+// No deja reservar más que lo disponible ni más que lo pedido; muestra el saldo a cotizar
+function limitarReserva(input) {
+  const max = Number(input.max) || 0;
+  let v = Number(input.value);
+  if (input.value !== '' && (isNaN(v) || v < 0)) { input.value = 0; v = 0; }
+  if (v > max) { input.value = max; v = max; toast('Solo hay ' + max + ' disponible para reservar; el resto se cotiza.'); }
+  const saldo = Math.max(0, (Number(input.dataset.pedido) || 0) - (Number(input.value) || 0));
+  const celda = input.closest('tr').querySelector('.bodega-saldo');
+  if (celda) celda.textContent = saldo > 0 ? saldo : '—';
+}
+
+
 
 async function enviarRevisionDisponibilidad() {
   const btn = document.getElementById('btn-guardar-disponibilidad');
@@ -1154,7 +1182,10 @@ async function enviarRevisionDisponibilidad() {
   const nReq = document.getElementById('bodega-select-req').value;
   if (!nReq) { toast('Selecciona una requisición primero.'); return; }
 
-  const items = [...document.querySelectorAll('.bodega-item-disponible')].map(input => ({
+  const inputs = [...document.querySelectorAll('.bodega-item-disponible')];
+  const excedidos = inputs.filter(i => Number(i.value) > Number(i.max));
+  if (excedidos.length) { toast('Hay cantidades mayores a lo disponible. Corrígelas antes de guardar.'); return; }
+  const items = inputs.map(input => ({
     codigo: input.dataset.codigo,
     cantidadDisponible: input.value || 0
   }));
