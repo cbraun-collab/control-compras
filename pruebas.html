@@ -588,6 +588,7 @@ async function cargarRequisicionEnComparativo() {
 
   info.textContent = `Centro de Costo: ${res.encabezado['Centro de Costo']} · Obra: ${res.encabezado['Obra']} · Criticidad: ${res.encabezado['Criticidad']}`;
   comparativoItemsActuales = res.items;
+  comparativoFechaNecesaria = res.encabezado['Fecha Necesaria'] ? new Date(res.encabezado['Fecha Necesaria']) : null;
 
   res.items.forEach((item, idx) => {
     const pedido = Number(item['Cantidad']) || 0;
@@ -752,6 +753,8 @@ function agregarFilaCotizacion(btn, codigo) {
         if (d.proveedor) { buscador.value = d.proveedor; div.querySelector('.comp-proveedor').value = d.proveedor; }
         if (d.precioUnitario) div.querySelector('.comp-precio').value = d.precioUnitario;
         if (d.plazoEntrega) div.querySelector('.comp-plazo').value = d.plazoEntrega;
+        div.dataset.cargos = Number(d.cargosAdicionales) > 0 ? d.cargosAdicionales : '';
+        div.dataset.detalleCargos = d.detalleCargos || '';
 
         let avisoDescripcion = '';
         const itemEsperado = comparativoItemsActuales.find(it => it['Codigo Articulo'] === codigo);
@@ -802,19 +805,37 @@ async function enviarComparativo() {
       const plazoEntrega = row.querySelector('.comp-plazo').value;
       const respaldoLink = row.dataset.respaldoLink || '';
       if (proveedor && precioUnitario) {
-        cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega, respaldoLink });
+        cotizaciones.push({ proveedor, codigo, precioUnitario, plazoEntrega, respaldoLink,
+          cargos: row.dataset.cargos || '', detalleCargos: row.dataset.detalleCargos || '' });
       }
     });
   });
 
   if (!cotizaciones.length) { toast('Agrega al menos una cotización.'); return; }
 
+  // Regla de Carlos (23-11-2026): si la cotización más barata no llega a tiempo a la
+  // fecha necesaria en obra (o su plazo no se entiende), la app no elige sola: pregunta.
+  const notas = [];
+  for (const codigo of [...new Set(cotizaciones.map(c => c.codigo))]) {
+    const delItem = cotizaciones.filter(c => c.codigo === codigo);
+    const masBarata = delItem.reduce((a, c) => Number(c.precioUnitario) < Number(a.precioUnitario) ? c : a);
+    const llegada = fechaLlegadaEstimada(masBarata.plazoEntrega);
+    const aTiempo = llegada && comparativoFechaNecesaria && llegada <= finDelDia(comparativoFechaNecesaria);
+    if (aTiempo) continue;
+    const elegida = await elegirGanador(codigo, delItem, masBarata);
+    if (!elegida) { toast('No se guardó: falta elegir el ganador de ' + codigo + '.'); return; }
+    delItem.forEach(c => { c.ganadorManual = (c === elegida); });
+    notas.push(codigo + ': ganador elegido por ' + currentUser + ' -> ' + elegida.proveedor +
+      (elegida !== masBarata ? ' (la más barata, ' + masBarata.proveedor + ', no llegaba a tiempo)' : ' (la más barata, aceptando su plazo)'));
+  }
+  cotizaciones.forEach(c => { delete c.cargos; delete c.detalleCargos; });
+
   btn.disabled = true;
   const textoOriginal = btn.textContent;
   btn.textContent = 'Guardando...';
   try {
-    const res = await callBackend('guardarComparativo', { usuario: currentUser, nRequisicion: nReq, cotizaciones });
-    toast(res.ok ? 'Comparativo guardado. El ganador quedó marcado automáticamente por menor precio.' : 'Error: ' + res.error);
+    const res = await callBackend('guardarComparativo', { usuario: currentUser, nRequisicion: nReq, cotizaciones, nota: notas.join(' | ') });
+    toast(res.ok ? (notas.length ? 'Comparativo guardado con el ganador que elegiste.' : 'Comparativo guardado. Ganó la más barata, que llega a tiempo.') : 'Error: ' + res.error);
     if (res.ok) {
       poblarSelectorRequisicionesComparativo();
       document.getElementById('comp-select-req').value = '';
@@ -824,6 +845,69 @@ async function enviarComparativo() {
     btn.disabled = false;
     btn.textContent = textoOriginal;
   }
+}
+
+/* ---------------- Plazo de entrega -> fecha estimada de llegada ----------------
+   Entiende "15 días hábiles", "30 días corridos", "30", "2 semanas". Hábiles = lunes a
+   viernes (no descuenta feriados: es aproximado). Si no entiende el texto, devuelve null. */
+let comparativoFechaNecesaria = null;
+function finDelDia(d) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
+function fechaLlegadaEstimada(plazo) {
+  const t = String(plazo || '').toLowerCase();
+  const m = t.match(/(\d+)/);
+  if (!m) return /inmediat|stock/.test(t) ? new Date() : null;
+  let n = Number(m[1]);
+  if (/semana/.test(t)) n *= 7;
+  const d = new Date();
+  if (/h[áa]bil/.test(t)) {
+    while (n > 0) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0 && d.getDay() !== 6) n--; }
+  } else d.setDate(d.getDate() + n);
+  return d;
+}
+function fechaCorta(d) { return d ? d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }) : '¿?'; }
+
+// Muestra las cotizaciones de un ítem y pide elegir el ganador. Devuelve la elegida o null.
+function elegirGanador(codigo, delItem, masBarata) {
+  return new Promise(resolve => {
+    const esc = t => String(t).replace(/</g, '&lt;');
+    const pesos = n => '$' + Number(n).toLocaleString('es-CL');
+    const item = comparativoItemsActuales.find(it => it['Codigo Articulo'] === codigo) || {};
+    const necesaria = comparativoFechaNecesaria;
+    const ordenadas = [...delItem].sort((a, b) => Number(a.precioUnitario) - Number(b.precioUnitario));
+    const fondo = document.createElement('div');
+    fondo.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px';
+    fondo.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:18px;font-size:13px">
+      <h3 style="margin:0 0 6px;color:#CF4520">Elige el ganador — ${esc(codigo)}</h3>
+      <div style="color:#555;margin-bottom:10px">${esc(item['Descripcion'] || '')}<br>
+        Se necesita en obra el <b>${necesaria ? necesaria.toLocaleDateString('es-CL') : '(sin fecha)'}</b>.
+        ${fechaLlegadaEstimada(masBarata.plazoEntrega)
+          ? `La más barata (${esc(masBarata.proveedor)}) <b>no llega a tiempo</b>.`
+          : `No se entiende el plazo de la más barata (${esc(masBarata.proveedor)}).`}</div>
+      ${ordenadas.map((c, i) => {
+        const lleg = fechaLlegadaEstimada(c.plazoEntrega);
+        const ok = lleg && necesaria && lleg <= finDelDia(necesaria);
+        return `<label style="display:block;border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0;cursor:pointer">
+          <input type="radio" name="elige-ganador" value="${delItem.indexOf(c)}" style="width:auto;margin-right:6px">
+          <b>${esc(c.proveedor)}</b> — ${pesos(c.precioUnitario)} c/u${i === 0 ? ' <span style="color:#27ae60">(más barata)</span>' : ''}
+          ${Number(c.cargos) > 0 ? `<br><span style="color:#CF4520">+ ${pesos(c.cargos)} ${esc(c.detalleCargos || 'cargos aparte')}</span>` : ''}
+          <br><span style="color:${ok ? '#27ae60' : '#c0392b'}">Plazo: ${esc(c.plazoEntrega || '(sin plazo)')} → llega aprox. ${fechaCorta(lleg)} ${ok ? '✓ a tiempo' : '✗ tarde o sin dato'}</span>
+        </label>`; }).join('')}
+      <div style="font-size:11px;color:#777;margin:6px 0 10px">Días hábiles = lunes a viernes, sin descontar feriados. Es una estimación.</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="secondary" data-accion="cancelar" style="width:auto;margin:0">Cancelar</button>
+        <button data-accion="ok" style="width:auto;margin:0">Confirmar ganador</button>
+      </div></div>`;
+    document.body.appendChild(fondo);
+    fondo.addEventListener('click', e => {
+      const accion = e.target.dataset && e.target.dataset.accion;
+      if (accion === 'cancelar') { fondo.remove(); resolve(null); }
+      if (accion === 'ok') {
+        const sel = fondo.querySelector('input[name="elige-ganador"]:checked');
+        if (!sel) { toast('Marca un proveedor.'); return; }
+        fondo.remove(); resolve(delItem[Number(sel.value)]);
+      }
+    });
+  });
 }
 
 /* ---------------- OC: selección de requisición, herencia de campos, ganadores automáticos ---------------- */
