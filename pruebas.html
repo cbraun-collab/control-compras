@@ -282,7 +282,24 @@ const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerR
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
   'obtenerDocumentosAsociados', 'listarReservas']);
 
+// Acciones que envían archivos: van por POST, porque un PDF en base64 no cabe en la
+// dirección de una llamada JSONP (daba "Error de red llamando a subirCotizacion").
+const ACCIONES_POST = new Set(['subirCotizacion', 'extraerDatosCotizacion']);
+
+async function llamarBackendPost(action, payload) {
+  const cuerpo = new URLSearchParams({ action, payload: JSON.stringify(payload || {}) });
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const r = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: cuerpo, signal: ctrl.signal });
+    return await r.json();
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? `Sin respuesta del servidor después de 90 s llamando a "${action}".` : 'Error de red llamando a ' + action + ': ' + err.message);
+  } finally { clearTimeout(t); }
+}
+
 async function callBackend(action, payload) {
+  if (ACCIONES_POST.has(action)) return llamarBackendPost(action, payload); // escribe: sin reintento
   const intentos = ACCIONES_LECTURA.has(action) ? 3 : 1;
   let ultimoError;
   for (let n = 1; n <= intentos; n++) {
@@ -630,10 +647,9 @@ function agregarFilaCotizacion(btn, codigo) {
     </div>
     <input placeholder="Precio Unit." type="number" class="comp-precio" style="max-width:110px">
     <input placeholder="Plazo entrega" class="comp-plazo" style="max-width:110px">
-    <label class="secondary" style="display:flex; align-items:center; justify-content:center; min-width:42px; max-width:42px; height:38px; padding:8px; cursor:pointer; margin:0; font-size:20px; border-width:2px;" title="Adjuntar cotización (PDF, imagen, Word, Excel)">
-      📎<input type="file" class="comp-archivo-cotizacion" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" style="display:none;">
+    <label class="secondary" style="display:flex; align-items:center; justify-content:center; gap:6px; min-width:120px; height:38px; padding:6px 12px; cursor:pointer; margin:0; font-size:14px; font-weight:bold; border-width:2px;" title="Adjuntar cotización (PDF, imagen, Word, Excel)"><span style="font-size:22px;">📎</span> Adjuntar<input type="file" class="comp-archivo-cotizacion" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" style="display:none;">
     </label>
-    <span class="comp-archivo-estado" style="font-size:10px; color:#777; align-self:center;"></span>`;
+    <span class="comp-archivo-estado" style="font-size:12px; color:#555; align-self:center; flex-basis:100%;"></span>`;
   lista.appendChild(div);
 
   const buscador = div.querySelector('.comp-proveedor-buscador');
@@ -710,7 +726,7 @@ function agregarFilaCotizacion(btn, codigo) {
     const nReqActual = document.getElementById('comp-select-req').value;
     if (!nReqActual) { toast('Selecciona una requisición primero.'); inputArchivo.value = ''; return; }
 
-    estadoArchivo.textContent = 'Subiendo...';
+    estadoArchivo.innerHTML = '<b style="color:#CF4520;">⏳ Subiendo ' + archivo.name + '...</b>';
     subidasEnCurso++;
     try {
     const base64Content = await new Promise((resolve, reject) => {
