@@ -732,12 +732,13 @@ function agregarFilaCotizacion(btn, codigo) {
     const correoVendedor = prompt('Correo del vendedor (opcional):', '') || '';
     const telefonoVendedor = prompt('Teléfono del vendedor (opcional):', '') || '';
 
-    await callBackend('guardarProveedor', { nombreProveedor: nombre, rut, direccion, telefonoEmpresa, nombreVendedor, correoVendedor, telefonoVendedor });
+    const rubro = prompt('¿Qué vende? (ej. cables, PVC, ferretería) — ayuda a ubicarlo en su rubro:', '') || '';
+    await callBackend('guardarProveedor', { nombreProveedor: nombre, rut, direccion, telefonoEmpresa, nombreVendedor, correoVendedor, telefonoVendedor, rubro, usuario: currentUser });
     div.querySelector('.comp-proveedor').value = nombre;
     div.dataset.rut = rut; div.dataset.direccion = direccion; div.dataset.telefonoEmpresa = telefonoEmpresa;
     div.dataset.nombreVendedor = nombreVendedor; div.dataset.correoVendedor = correoVendedor; div.dataset.telefonoVendedor = telefonoVendedor;
     linkNuevo.style.display = 'none';
-    toast('Proveedor guardado para futuras búsquedas.');
+    toast('Proveedor agregado a FOR-ADQ-002, por validar: hasta que lo validen no se le puede emitir OC.');
   });
 
   document.addEventListener('click', (e) => {
@@ -1025,7 +1026,7 @@ function textoRegistroProveedor(reg, d) {
   const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   if (!reg || !reg.estado || reg.estado === 'sin datos') return '';
   const bloqueo = 'Hasta que lo valide Luis Miranda, Carlos Braun o Claudia Menéndez no se le pueden enviar solicitudes de cotización ni emitir OC. Ya se les avisó por correo.';
-  if (reg.estado === 'nuevo') return `<br><span style="color:#b9770e;font-weight:bold">⏳ Proveedor nuevo registrado${d.rut ? ' (RUT ' + esc(d.rut) + ')' : ''}, <u>por validar</u>.</span> <span style="color:#b9770e">${bloqueo}</span>`;
+  if (reg.estado === 'nuevo') return `<br><span style="color:#b9770e;font-weight:bold">⏳ Proveedor nuevo agregado a FOR-ADQ-002${d.rut ? ' (RUT ' + esc(d.rut) + ')' : ''}, <u>por validar</u>, en: ${esc((reg.secciones || []).join(', '))}.</span> <span style="color:#b9770e">${bloqueo}</span>`;
   if (reg.validacion === 'RECHAZADO') return '<br><span style="color:#c0392b;font-weight:bold">⛔ Este proveedor fue rechazado en la validación: no se le puede comprar.</span>';
   if (reg.validacion === 'PENDIENTE') return `<br><span style="color:#b9770e;font-weight:bold">⏳ Proveedor registrado pero aún por validar.</span> <span style="color:#b9770e">${bloqueo}</span>`;
   if (reg.estado === 'datos por validar') return `<br><span style="color:#b9770e">✓ Proveedor validado. El documento trae datos nuevos (${(reg.propuestos || []).map(esc).join(', ')}) que quedaron por validar; no se usan hasta entonces.</span>`;
@@ -1407,23 +1408,8 @@ async function cambiarEstadoOC(nOC, estadoNuevo) {
   cargarOC();
 }
 
-const CAMPOS_CONTACTO_PROV = ['RUT', 'Direccion', 'Telefono Empresa', 'Nombre Vendedor', 'Correo Vendedor', 'Telefono Vendedor'];
-// "Eliminar" anula: queda con Estado ANULADA, el motivo y quién lo hizo. No se borra la fila
-// (no se reutiliza el folio y queda la trazabilidad). Una requisición anulada libera sus reservas.
-async function eliminarDocumentoUI(tipo, numero, btn) {
-  const nombre = tipo === 'REQ' ? 'la requisición' : 'la orden de compra';
-  const motivo = prompt(`Vas a eliminar ${nombre} ${numero}.\n\nQueda anulada (no se usa más, sale de las listas${tipo === 'REQ' ? ' y se liberan sus reservas de bodega' : ''}), pero se guarda el registro con el motivo.\n\nEscribe el motivo:`, '');
-  if (motivo === null) return;
-  if (!motivo.trim()) { toast('Debes indicar un motivo.'); return; }
-  btn.disabled = true; btn.textContent = 'Eliminando...';
-  try {
-    const res = await callBackend('anularDocumento', { tipo, numero, motivo, usuario: currentUser });
-    if (!res.ok) { toast('No se eliminó: ' + res.error); return; }
-    toast(numero + ' eliminada' + (res.reservasLiberadas ? ` · ${res.reservasLiberadas} reserva(s) liberada(s)` : '') + '.');
-    cargarRequisiciones(); cargarOC(); cargarReservas();
-  } finally { btn.disabled = false; btn.textContent = '🗑 Eliminar'; }
-}
-
+const CAMPOS_PROV = ['RUT', 'DIRECCION', 'CONTACTO', 'TELEFONO', 'EMAIL'];
+const ETIQUETA_CAMPO = { RUT: 'RUT', DIRECCION: 'Dirección', CONTACTO: 'Contacto', TELEFONO: 'Teléfono', EMAIL: 'Correo' };
 async function cargarProveedoresPorValidar() {
   const caja = document.getElementById('lista-proveedores-validar');
   const res = await callBackend('listarProveedoresPorValidar', {});
@@ -1432,22 +1418,32 @@ async function cargarProveedoresPorValidar() {
   const puede = (res.validadores || []).indexOf(String(currentUser || '').toLowerCase()) >= 0;
   if (!res.data.length) { caja.innerHTML = '<p style="color:#888; font-size:12px;">No hay proveedores por validar.</p>'; return; }
   caja.innerHTML = (puede ? '' : '<p style="font-size:12px;color:#b9770e">Puedes ver la lista, pero solo Luis Miranda, Carlos Braun o Claudia Menéndez pueden validar.</p>') +
-    res.data.map((p, idx) => {
-      const nuevo = String(p['Estado Validacion'] || '').toUpperCase() === 'PENDIENTE';
+    res.data.map(p => {
+      const nuevo = p.estado === 'PENDIENTE';
       const prop = (p.propuestos && p.propuestos.campos) || {};
-      const doc = nuevo ? p['Documento Origen'] : (p.propuestos && p.propuestos.documento);
-      return `<div class="prov-validar" data-nombre="${esc(p['Nombre Proveedor'])}" style="border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px">
-        <b>${esc(p['Nombre Proveedor'])}</b> — ${nuevo ? '<span style="color:#b9770e">proveedor nuevo</span>' : '<span style="color:#b9770e">datos nuevos para un proveedor ya validado</span>'}
-        <br><span style="color:#777">Cargado por ${esc(nuevo ? p['Registrado Por'] : (p.propuestos && p.propuestos.por))} el ${esc(nuevo ? p['Fecha Registro'] : (p.propuestos && p.propuestos.fecha))}</span>
-        · ${doc ? `<a href="${esc(doc)}" target="_blank"><b>Ver documento de origen</b></a>` : '<span style="color:#c0392b">sin copia del documento</span>'}
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;margin-top:6px">
-          ${CAMPOS_CONTACTO_PROV.map(k => {
+      const doc = nuevo ? p.documento : (p.propuestos && p.propuestos.documento);
+      const esMat = p.tipo === 'MATERIALES';
+      const enSecciones = (p.secciones || []).filter(s => s.indexOf('›') > 0);
+      const porClasificar = enSecciones.some(s => s.indexOf('POR CLASIFICAR') >= 0);
+      return `<div class="prov-validar" data-nombre="${esc(p.nombre)}" style="border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:12px">
+        <b>${esc(p.nombre)}</b> — ${nuevo ? '<span style="color:#b9770e">proveedor nuevo</span>' : '<span style="color:#b9770e">datos nuevos para un proveedor ya validado</span>'}
+        · <b>${esMat ? 'Materiales' : 'Servicios'}</b>${p.rubroTexto ? ': ' + esc(p.rubroTexto) : ''}
+        <br><span style="color:#777">Cargado por ${esc(nuevo ? p.registradoPor : (p.propuestos && p.propuestos.por))} el ${esc(nuevo ? p.fechaRegistro : (p.propuestos && p.propuestos.fecha))}</span>
+        · ${doc ? `<a href="${esc(doc)}" target="_blank"><b>Ver documento de origen</b></a>` : '<span style="color:#b9770e">ingresado a mano, sin documento</span>'}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;margin-top:6px">
+          ${CAMPOS_PROV.map(k => {
             const valor = prop[k] !== undefined ? prop[k] : (p[k] || '');
             const marca = prop[k] !== undefined ? ' style="border-color:#b9770e;background:#fff8ec"' : '';
-            return `<label style="font-size:11px;margin:0">${k}${prop[k] !== undefined ? ' <b style="color:#b9770e">(nuevo)</b>' : ''}<input data-campo="${k}" value="${esc(valor)}"${marca} ${puede ? '' : 'disabled'}></label>`;
+            return `<label style="font-size:11px;margin:0">${ETIQUETA_CAMPO[k]}${prop[k] !== undefined ? ' <b style="color:#b9770e">(nuevo)</b>' : ''}<input data-campo="${k}" value="${esc(valor)}"${marca} ${puede ? '' : 'disabled'}></label>`;
           }).join('')}
         </div>
-        ${puede ? `<div style="display:flex;gap:8px;margin-top:6px">
+        ${esMat ? `<div style="margin-top:6px"><b style="font-size:11px">Rubros en FOR-ADQ-002</b>${porClasificar ? ' <span style="color:#c0392b;font-size:11px">— está POR CLASIFICAR: marca al menos un rubro</span>' : ''}
+          <div style="display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px">
+            ${(res.secciones || []).map(s => `<label style="font-size:11px;margin:0;display:flex;align-items:center;gap:4px;font-weight:normal">
+              <input type="checkbox" data-seccion="${esc(s)}" style="width:auto;margin:0" ${enSecciones.indexOf(s) >= 0 ? 'checked' : ''} ${puede ? '' : 'disabled'}>${esc(s)}</label>`).join('')}
+          </div>
+          <div style="font-size:10px;color:#777">Al marcar un rubro nuevo se agrega una fila en esa sección. Desmarcar no borra filas: eso se hace en la planilla.</div></div>` : ''}
+        ${puede ? `<div style="display:flex;gap:8px;margin-top:8px">
           <button type="button" onclick="decidirProveedor(this,'VALIDAR')" style="width:auto;margin:0">✓ Validar</button>
           <button type="button" class="secondary" onclick="decidirProveedor(this,'RECHAZAR')" style="width:auto;margin:0">Rechazar</button></div>` : ''}
       </div>`;
@@ -1457,16 +1453,21 @@ async function cargarProveedoresPorValidar() {
 async function decidirProveedor(btn, decision) {
   const caja = btn.closest('.prov-validar');
   const nombre = caja.dataset.nombre;
+  const secciones = [...caja.querySelectorAll('[data-seccion]:checked')].map(c => c.dataset.seccion);
   let motivo = '';
   if (decision === 'RECHAZAR') {
     motivo = prompt('¿Por qué se rechaza ' + nombre + '? (queda anotado)', '');
     if (motivo === null) return;
-  } else if (!confirm('¿Validar ' + nombre + ' con estos datos? Revisaste el documento de origen.')) return;
+  } else {
+    const hayCasillas = caja.querySelector('[data-seccion]');
+    if (hayCasillas && !secciones.length) { toast('Marca al menos un rubro para ' + nombre + '.'); return; }
+    if (!confirm('¿Validar ' + nombre + ' con estos datos? Revisaste el documento de origen.')) return;
+  }
   const datos = {};
   caja.querySelectorAll('[data-campo]').forEach(i => { datos[i.dataset.campo] = i.value; });
   caja.querySelectorAll('button').forEach(b => b.disabled = true);
-  const res = await callBackend('validarProveedor', { nombre, decision, usuario: currentUser, motivo, datos });
-  toast(res.ok ? (decision === 'VALIDAR' ? nombre + ' validado.' : nombre + ' rechazado.') : 'Error: ' + res.error);
+  const res = await callBackend('validarProveedor', { nombre, decision, usuario: currentUser, motivo, datos, secciones });
+  toast(res.ok ? (decision === 'VALIDAR' ? nombre + ' validado en FOR-ADQ-002.' : nombre + ' rechazado.') : 'Error: ' + res.error);
   cargarProveedoresPorValidar();
 }
 
