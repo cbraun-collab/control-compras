@@ -1,11 +1,13 @@
-const CACHE_NAME = 'control-compras-senercom-v1';
+const CACHE_NAME = 'control-compras-senercom-v2';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(self.clients.claim());
+  e.waitUntil(caches.keys()
+    .then((ks) => Promise.all(ks.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()));
 });
 
 // Network-first: siempre intenta traer la versión más nueva; si falla, usa caché.
@@ -33,8 +35,9 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(fetch(e.request));
     return;
   }
+  // cache: 'no-cache' obliga a revisar si hay versión nueva (GitHub Pages permite guardar 10 min)
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'no-cache' })
       .then((response) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(e.request, copy));

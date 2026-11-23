@@ -234,20 +234,9 @@
    CONFIGURACIÓN — mismo patrón OAuth que Inventario Bodega / Rendición Boletas
    ========================================================================== */
 const CLIENT_ID = '72369192874-rgv4vqjl243p39fv0dntkl5a4m13s8k6.apps.googleusercontent.com';
-// Modo pruebas: abrir la app con ?modo=pruebas usa el backend de PRUEBAS, que trabaja
-// sobre las copias "(PRUEBAS)" de las planillas y manda los correos solo a Carlos.
-const MODO_PRUEBAS = new URLSearchParams(location.search).get('modo') === 'pruebas';
-const APPS_SCRIPT_URL = MODO_PRUEBAS
-  ? 'https://script.google.com/macros/s/AKfycby0wKlgzb6Lg93HfSMGD6eiaavq_VEwNLfWvauHTrOLj9RQZTBFnjATJO7vCEXh4Ea62Q/exec'
-  : 'https://script.google.com/macros/s/AKfycbz4OZos9XcBu4kEaqqJRGfA-EBWFPvANPKz1jzSGGcB65ekrw28yYbxCYUuVScvpB9ONQ/exec';
-if (MODO_PRUEBAS) {
-  document.addEventListener('DOMContentLoaded', () => {
-    const b = document.createElement('div');
-    b.textContent = 'MODO PRUEBAS — datos de prueba, correos solo a Carlos';
-    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1000;background:#CF4520;color:#fff;text-align:center;font:bold 12px Arial;padding:4px';
-    document.body.appendChild(b); document.body.style.paddingTop = '24px';
-  });
-}
+// ?modo=pruebas lleva a la versión de pruebas (pruebas.html), que usa el backend de PRUEBAS.
+if (new URLSearchParams(location.search).get('modo') === 'pruebas') location.replace('pruebas.html');
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz4OZos9XcBu4kEaqqJRGfA-EBWFPvANPKz1jzSGGcB65ekrw28yYbxCYUuVScvpB9ONQ/exec';
 
 // Lista blanca — igual criterio que Rendición Boletas
 const USUARIOS_AUTORIZADOS = [
