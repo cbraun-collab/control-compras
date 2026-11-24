@@ -324,6 +324,14 @@
         </table>
       </div>
       <div class="card">
+        <h3>Valor y antigüedad de bodega</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Cuánta plata hay en bodega: <b>reservado</b> (comprometido para una obra) y
+          <b>libre</b> (parado, sin destino). La antigüedad se cuenta desde el 24-11-2026: lo que había antes figura como «sin dato».
+          Ordenado por valor libre: arriba lo que conviene mover o usar primero.</p>
+        <button class="secondary" onclick="cargarValorBodega()">Actualizar</button>
+        <div id="valor-bodega"></div>
+      </div>
+      <div class="card">
         <h3>Proveedores por validar</h3>
         <p style="font-size:12px; color:#555; margin:0 0 6px;">Proveedores y datos que la app sacó de cotizaciones. Los valida
           Luis Miranda, Carlos Braun o Claudia Menéndez revisando el documento de origen; se pueden corregir antes de validar.
@@ -404,7 +412,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -509,7 +517,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
     if (btn.dataset.view === 'seguimiento') {
-      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarStockCritico(); cargarPresupuesto();
+      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarStockCritico(); cargarPresupuesto();
     }
     if (btn.dataset.view === 'comparativo') {
       poblarSelectorRequisicionesComparativo();
@@ -1891,6 +1899,24 @@ async function devolverUI(id, btn) {
     toast(res.ok ? `Devueltos ${res.devuelto}; faltan ${res.pendiente}.` : 'No se devolvió: ' + res.error);
     cargarPrestamos(); cargarParaEntrega();
   } finally { btn.disabled = false; }
+}
+
+async function cargarValorBodega() {
+  const caja = document.getElementById('valor-bodega');
+  caja.innerHTML = '<p style="color:#888;font-size:12px">Calculando…</p>';
+  const r = await callBackend('valorBodega', { limite: 40 });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (!r.ok) { caja.innerHTML = 'Error: ' + esc(r.error); return; }
+  caja.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin:6px 0;font-size:14px">
+      <div>Total <b>${pesosCL(r.total)}</b></div><div>Reservado <b>${pesosCL(r.reservado)}</b></div>
+      <div style="color:#c0392b">Libre (parado) <b>${pesosCL(r.libre)}</b></div></div>
+    ${r.sinValor ? `<div style="font-size:12px;color:#b9770e">⚠️ ${r.sinValor} de ${r.cantidadArticulos} artículos no tienen valor unitario en Inventario: falta cargar su costo para que el total sea real.${r.estimados ? ` ${r.estimados} se valorizaron con el último precio de compra (estimado).` : ''}</div>` : ''}
+    <div style="overflow-x:auto"><table style="font-size:12px;margin-top:6px"><thead><tr><th>Antigüedad</th><th>Valor total</th><th>Valor libre</th></tr></thead><tbody>
+      ${r.porTramo.map(t => `<tr><td>${esc(t.tramo)}</td><td>${pesosCL(t.valorTotal)}</td><td>${pesosCL(t.valorLibre)}</td></tr>`).join('')}</tbody></table></div>
+    <div style="overflow-x:auto"><table style="font-size:12px;margin-top:8px"><thead><tr><th>Código</th><th>Descripción</th><th>Stock</th><th>Reservado</th><th>Libre</th><th>Valor libre</th><th>Valor total</th><th>En bodega desde</th><th>Último mov.</th></tr></thead><tbody>
+      ${r.articulos.map(a => `<tr><td>${esc(a.codigo)}</td><td>${esc(a.descripcion)}</td><td>${a.stock} ${esc(a.unidad)}</td><td>${a.reservado}</td>
+        <td style="font-weight:bold;color:${a.libre ? '#c0392b' : '#777'}">${a.libre}</td><td>${pesosCL(a.valorLibre)}</td><td>${pesosCL(a.valor)}${a.valorEstimado ? ' <span title="estimado con el último precio de compra" style="color:#b9770e">*</span>' : ''}</td>
+        <td>${a.loteInicial ? 'antes del ' + esc(r.fechaInicio) : esc(a.desde)}<br><span style="color:#777">${a.diasEnBodega} días</span></td><td>${esc(a.ultimoMovimiento) || '—'}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
