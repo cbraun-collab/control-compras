@@ -60,6 +60,7 @@
     <button class="tab" data-view="comparativo">Comparativo</button>
     <button class="tab" data-view="oc">OC</button>
     <button class="tab" data-view="recepcion">Recepción</button>
+    <button class="tab" data-view="facturas">Facturas</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
   </nav>
 
@@ -214,6 +215,27 @@
       </div>
     </section>
 
+    <!-- ===================== VISTA: FACTURAS (Administración) ===================== -->
+    <section id="view-facturas" class="view hidden">
+      <div class="card">
+        <h3>Cargar factura</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Adjunta el PDF de la factura. La IA lee folio, RUT, montos y las guías
+          que cita, y propone qué material recibido cubre. Revisa, ajusta y confirma: el costo queda cargado a cada centro de costo.</p>
+        <label class="secondary" style="display:inline-flex; align-items:center; gap:8px; padding:10px 16px; cursor:pointer; font-size:15px; font-weight:bold; border-width:2px; margin:0;">
+          <span style="font-size:24px;">📎</span> Adjuntar factura
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" onchange="leerFacturaUI(this)">
+        </label>
+        <div id="fac-trabajo" style="margin-top:10px;"></div>
+      </div>
+      <div class="card">
+        <h3>Costo cargado por centro de costo</h3>
+        <div id="fac-cc"></div>
+        <h3 style="margin-top:14px;">Facturas registradas</h3>
+        <button class="secondary" onclick="cargarFacturas()">Actualizar</button>
+        <div id="fac-lista"></div>
+      </div>
+    </section>
+
     <!-- ===================== VISTA: SEGUIMIENTO ===================== -->
     <section id="view-seguimiento" class="view hidden">
       <div class="card">
@@ -316,7 +338,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -434,6 +456,9 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     }
     if (btn.dataset.view === 'recepcion') {
       cargarOCRecepcion();
+    }
+    if (btn.dataset.view === 'facturas') {
+      cargarFacturas();
     }
   });
 });
@@ -1492,6 +1517,98 @@ async function verRecepcionesOC(det, nOC) {
   det.querySelector('.rec-hist').innerHTML = (res.data || []).length ? (res.data.map(r =>
     `${esc(r['Fecha'])} · guía <b>${esc(r['N Guia'])}</b> · ${esc(r['Codigo Articulo'])} × ${esc(r['Cantidad Recibida'])} ${esc(r['Unidad'])} → ${esc(r['CodBodega'])} · ${esc(r['Estado Linea'])} · ${esc(r['Recibido Por'])}${r['Observacion'] ? ' · ' + esc(r['Observacion']) : ''}`).join('<br>'))
     : 'Sin recepciones todavía.';
+}
+
+/* ---------------- Facturas ↔ recepciones ↔ centro de costo (24-11-2026) ---------------- */
+const pesosCL = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CL');
+let facturaEnTrabajo = null;
+
+async function leerFacturaUI(input) {
+  const archivo = input.files[0]; input.value = '';
+  if (!archivo) return;
+  const caja = document.getElementById('fac-trabajo');
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  caja.innerHTML = '<b style="color:#CF4520">⏳ Subiendo ' + esc(archivo.name) + '…</b>';
+  const base64Content = await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = mal; r.readAsDataURL(archivo); });
+  const subida = await callBackend('subirCotizacion', { nRequisicion: 'FACTURAS', nombreArchivo: archivo.name, mimeType: archivo.type, base64Content });
+  if (!subida.ok) { caja.innerHTML = '<span style="color:#c0392b">Error al subir: ' + esc(subida.error) + '</span>'; return; }
+  caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <b>⏳ La IA está leyendo la factura…</b>`;
+  const res = await callBackend('leerFactura', { base64Content, mimeType: archivo.type, nombreArchivo: archivo.name });
+  if (!res.ok) { caja.innerHTML = `<a href="${subida.link}" target="_blank">Ver archivo</a> · <span style="color:#c0392b">No se pudo leer: ${esc(res.error)}</span>`; return; }
+  facturaEnTrabajo = { factura: res.factura, archivo: subida.link, lineas: res.factura.asignaciones.map(a => Object.assign({ marcada: true }, a))
+    .concat(res.otrasLineas.map(l => Object.assign({ marcada: false, cantidad: l.porFacturar, precioUnitarioFactura: l.precioOC, calce: '' }, l))) };
+  pintarFacturaEnTrabajo(res.yaRegistrada);
+}
+
+function pintarFacturaEnTrabajo(yaRegistrada) {
+  const caja = document.getElementById('fac-trabajo');
+  const t = facturaEnTrabajo, fa = t.factura;
+  const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const campo = (k, etiqueta, ancho) => `<label style="font-size:11px;margin:0">${etiqueta}<input data-fac="${k}" value="${esc(fa[k])}" style="max-width:${ancho}px;margin:0"></label>`;
+  caja.innerHTML = `<a href="${t.archivo}" target="_blank">Ver factura</a>
+    ${yaRegistrada ? `<div style="color:#c0392b;font-weight:bold">⚠️ Esta factura ya está registrada (${esc(yaRegistrada)}).</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+      ${campo('folio', 'Folio', 110)}${campo('fecha', 'Fecha', 110)}${campo('rutEmisor', 'RUT proveedor', 130)}
+      ${campo('razonSocial', 'Proveedor', 260)}${campo('neto', 'Neto', 110)}${campo('iva', 'IVA', 100)}${campo('total', 'Total', 110)}
+    </div>
+    <div style="font-size:12px;color:#555;margin-top:4px">Referencias: ${(fa.referencias || []).map(r => esc(r.tipo + ' ' + r.numero)).join(', ') || '—'}</div>
+    ${fa.nota ? `<div style="font-size:12px;color:#b9770e;margin-top:4px">IA: ${esc(fa.nota)}</div>` : ''}
+    <div style="overflow-x:auto"><table style="margin-top:8px;font-size:12px">
+      <thead><tr><th></th><th>Material recibido</th><th>OC · guía · centro de costo</th><th>Cant.</th><th>Precio OC</th><th>Precio factura</th><th>Neto</th></tr></thead>
+      <tbody>${t.lineas.map((l, i) => {
+        const dif = Math.abs(Number(l.precioUnitarioFactura) - Number(l.precioOC)) > 0.5;
+        return `<tr style="${l.marcada ? '' : 'color:#999'}">
+          <td><input type="checkbox" ${l.marcada ? 'checked' : ''} style="width:auto;margin:0" onchange="facturaEnTrabajo.lineas[${i}].marcada=this.checked; pintarFacturaEnTrabajo()"></td>
+          <td>${esc(l.codigo)} ${esc(l.descripcion)}${l.calce && l.calce !== 'alta' ? ` <span style="color:#b9770e">(calce ${esc(l.calce)})</span>` : ''}</td>
+          <td>${esc(l.nOC)} · guía ${esc(l.nGuia)} · ${esc(l.centroCosto)}</td>
+          <td><input type="number" value="${l.cantidad}" max="${l.porFacturar}" step="any" style="width:70px;margin:0"
+               onchange="facturaEnTrabajo.lineas[${i}].cantidad=Math.min(Number(this.value)||0, ${l.porFacturar}); pintarFacturaEnTrabajo()"> / ${l.porFacturar}</td>
+          <td>${pesosCL(l.precioOC)}</td>
+          <td style="${dif ? 'color:#c0392b;font-weight:bold' : ''}">${pesosCL(l.precioUnitarioFactura)}${dif ? ' ⚠️' : ''}</td>
+          <td>${l.marcada ? pesosCL(l.cantidad * l.precioUnitarioFactura) : '—'}</td></tr>`; }).join('') || '<tr><td colspan="7" style="color:#888">No hay material recibido de este proveedor pendiente de facturar.</td></tr>'}</tbody>
+    </table></div>
+    ${(() => { const asig = t.lineas.filter(l => l.marcada).reduce((s, l) => s + l.cantidad * l.precioUnitarioFactura, 0);
+      const dif = (Number(fa.neto) || 0) - asig;
+      return `<div style="margin-top:6px;font-size:13px">Asignado <b>${pesosCL(asig)}</b> de neto factura <b>${pesosCL(fa.neto)}</b> ·
+        <span style="color:${Math.abs(dif) <= Math.max(10, Math.abs(fa.neto) * 0.001) ? '#27ae60' : '#c0392b'};font-weight:bold">diferencia ${pesosCL(dif)}</span></div>`; })()}
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <label style="font-size:12px;margin:0;display:flex;gap:4px;align-items:center;font-weight:normal"><input type="checkbox" id="fac-sinoc" style="width:auto;margin:0"> Gasto sin OC (combustible, telefonía…)</label>
+      <input id="fac-obs" placeholder="Observación o motivo" style="flex:1;min-width:180px;margin:0">
+      <button class="primary" style="width:auto;margin:0" onclick="registrarFacturaUI(this)">Registrar factura</button>
+    </div>`;
+}
+
+async function registrarFacturaUI(btn) {
+  const t = facturaEnTrabajo; if (!t || btn.disabled) return;
+  document.querySelectorAll('[data-fac]').forEach(i => { t.factura[i.dataset.fac] = ['neto', 'iva', 'total'].indexOf(i.dataset.fac) >= 0 ? Number(i.value) || 0 : i.value; });
+  const asignaciones = t.lineas.filter(l => l.marcada && l.cantidad > 0)
+    .map(l => ({ idRecepcion: l.idRecepcion, codigo: l.codigo, cantidad: l.cantidad, precioUnitarioFactura: l.precioUnitarioFactura }));
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const res = await callBackend('registrarFactura', { factura: t.factura, asignaciones, archivo: t.archivo, usuario: currentUser,
+      sinOC: document.getElementById('fac-sinoc').checked, observacion: document.getElementById('fac-obs').value });
+    if (!res.ok) { toast('No se guardó: ' + res.error); return; }
+    toast(`Factura ${t.factura.folio}: ${res.estado}` + (res.estado === 'ASIGNADA PARCIAL' ? ` (faltan ${pesosCL(res.diferencia)})` : ''));
+    document.getElementById('fac-trabajo').innerHTML = ''; facturaEnTrabajo = null;
+    cargarFacturas();
+  } finally { btn.disabled = false; btn.textContent = 'Registrar factura'; }
+}
+
+async function cargarFacturas() {
+  const res = await callBackend('listarFacturas', {});
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (!res.ok) { document.getElementById('fac-lista').innerHTML = 'Error: ' + esc(res.error); return; }
+  const cc = Object.entries(res.costoPorCC || {});
+  document.getElementById('fac-cc').innerHTML = (cc.length ? cc.map(([k, v]) => `<div style="font-size:13px">${esc(k)}: <b>${pesosCL(v)}</b> neto</div>`).join('') : '<p style="color:#888;font-size:12px">Sin facturas asignadas todavía.</p>')
+    + `<div style="font-size:12px;color:#777;margin-top:4px">Líneas recibidas aún sin factura: ${res.porFacturar}</div>`;
+  const color = { 'CONCILIADA': '#27ae60', 'ASIGNADA PARCIAL': '#b9770e', 'SIN OC': '#555' };
+  document.getElementById('fac-lista').innerHTML = res.data.length ? `<div style="overflow-x:auto"><table style="font-size:12px">
+    <thead><tr><th>Folio</th><th>Proveedor</th><th>Neto</th><th>Asignado</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+    ${res.data.map(f => `<tr><td><b>${esc(f['Folio'])}</b><br><span style="color:#777">${esc(f['Fecha Emision'])}</span></td><td>${esc(f['Proveedor'])}</td>
+      <td>${pesosCL(f['Monto Neto'])}</td><td>${pesosCL(f['Neto Asignado'])}</td>
+      <td style="color:${color[f['Estado']] || '#222'};font-weight:bold">${esc(f['Estado'])}</td>
+      <td>${f.detalle.map(d => `${esc(d.oc)} · ${esc(d.codigo)} × ${d.cantidad} → ${esc(d.cc)}${Math.abs(d.difPrecio) > 0.5 ? ` <span style="color:#c0392b">(precio ${d.difPrecio > 0 ? '+' : ''}${pesosCL(d.difPrecio)} vs OC)</span>` : ''}`).join('<br>') || esc(f['Observacion'])}</td></tr>`).join('')}
+    </tbody></table></div>` : '<p style="color:#888;font-size:12px">No hay facturas registradas.</p>';
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
