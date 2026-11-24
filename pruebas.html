@@ -59,6 +59,7 @@
     <button class="tab" data-view="bodega">Bodega</button>
     <button class="tab" data-view="comparativo">Comparativo</button>
     <button class="tab" data-view="oc">OC</button>
+    <button class="tab" data-view="recepcion">Recepción</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
   </nav>
 
@@ -197,6 +198,22 @@
       </div>
     </section>
 
+    <!-- ===================== VISTA: RECEPCIÓN (Bodega) ===================== -->
+    <section id="view-recepcion" class="view hidden">
+      <div class="card">
+        <h3>Recepción de materiales</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Cuando llega material, búscalo por N° de OC, proveedor, RUT,
+          requisición, obra o código, y anota cuánto llegó con esta guía. Puede llegar en varias guías: la OC va mostrando
+          cuánto falta por línea.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="rec-buscar" placeholder="OC, proveedor, RUT, REQ, obra o código…" style="flex:1; min-width:200px; margin:0;"
+                 onkeydown="if(event.key==='Enter') cargarOCRecepcion()">
+          <button class="secondary" onclick="cargarOCRecepcion()" style="width:auto; margin:0;">Buscar</button>
+        </div>
+        <div id="rec-lista" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
     <!-- ===================== VISTA: SEGUIMIENTO ===================== -->
     <section id="view-seguimiento" class="view hidden">
       <div class="card">
@@ -299,7 +316,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -414,6 +431,9 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     }
     if (btn.dataset.view === 'bodega') {
       poblarSelectorRequisicionesBodega();
+    }
+    if (btn.dataset.view === 'recepcion') {
+      cargarOCRecepcion();
     }
   });
 });
@@ -1399,6 +1419,79 @@ function filtrarTablaOC() {
     String(r['N Requisicion Origen'] || '').toUpperCase().includes(termino)
   );
   renderTablaOC(filtradas);
+}
+
+/* ---------------- Recepción de materiales contra OC (24-11-2026) ---------------- */
+let bodegaPorDefecto = 'MATERIALES 2025';
+async function cargarOCRecepcion() {
+  const caja = document.getElementById('rec-lista');
+  caja.innerHTML = '<p style="color:#888;font-size:12px">Buscando…</p>';
+  const res = await callBackend('listarOCParaRecepcion', { termino: document.getElementById('rec-buscar').value });
+  if (!res.ok) { caja.innerHTML = '<p style="color:#c0392b">Error: ' + res.error + '</p>'; return; }
+  bodegaPorDefecto = res.bodegaPorDefecto || bodegaPorDefecto;
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!res.data.length) { caja.innerHTML = '<p style="color:#888;font-size:12px">No hay OC abiertas que coincidan.</p>'; return; }
+  caja.innerHTML = res.data.map(o => `
+    <div class="rec-oc" data-noc="${esc(o.nOC)}" style="border:1px solid #ddd;border-radius:8px;padding:10px;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <b style="color:var(--teal)">${esc(o.nOC)} — ${esc(o.proveedor)}</b>
+        <span style="font-size:12px;color:${o.estado === 'RECIBIDO PARCIAL' ? '#b9770e' : '#555'}">${esc(o.estado)}</span>
+      </div>
+      <div style="font-size:12px;color:#777">${esc(o.nRequisicion)} · ${esc(o.centroCosto)} · ${esc(o.obra)}${o.rut ? ' · RUT ' + esc(o.rut) : ''}</div>
+      <div style="overflow-x:auto"><table style="margin-top:6px">
+        <thead><tr><th>Código</th><th>Descripción</th><th>Pedido</th><th>Recibido</th><th>Falta</th><th>Llega ahora</th></tr></thead>
+        <tbody>${o.lineas.map(l => `<tr>
+          <td>${esc(l.codigo)}</td><td>${esc(l.descripcion)}</td><td>${l.pedida} ${esc(l.unidad)}</td>
+          <td>${l.recibida}</td><td style="font-weight:bold;color:${l.pendiente ? '#CF4520' : '#27ae60'}">${l.pendiente || '✓'}</td>
+          <td>${l.pendiente ? `<input type="number" class="rec-cant" data-codigo="${esc(l.codigo)}" min="0" max="${l.pendiente}" step="any"
+               style="width:70px;min-width:60px;margin:0" placeholder="0" oninput="limitarRecepcion(this)">` : ''}</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${o.pendienteTotal ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
+        <label style="font-size:11px;margin:0">N° guía de despacho *<input class="rec-guia" style="max-width:150px;margin:0"></label>
+        <label style="font-size:11px;margin:0">Bodega<input class="rec-bodega" value="${esc(bodegaPorDefecto)}" style="max-width:160px;margin:0"></label>
+        <label style="font-size:11px;margin:0;flex:1;min-width:160px">Observación<input class="rec-obs" style="margin:0" placeholder="daños, diferencias, llegó de más…"></label>
+        <button type="button" class="secondary" style="width:auto;margin:0" onclick="recibirTodoPendiente(this)">Llegó todo lo que falta</button>
+        <button type="button" class="primary" style="width:auto;margin:0" onclick="registrarRecepcionUI(this)">Registrar recepción</button>
+      </div>` : ''}
+      <details style="margin-top:6px;font-size:12px" ontoggle="if(this.open) verRecepcionesOC(this, '${esc(o.nOC)}')"><summary>Recepciones anteriores</summary><div class="rec-hist">…</div></details>
+    </div>`).join('');
+}
+
+function limitarRecepcion(input) {
+  const max = Number(input.max) || 0;
+  if (Number(input.value) > max) { input.value = max; toast('Solo faltan ' + max + '. Si llegó de más, anótalo en la observación.'); }
+  if (Number(input.value) < 0) input.value = 0;
+}
+
+function recibirTodoPendiente(btn) {
+  btn.closest('.rec-oc').querySelectorAll('.rec-cant').forEach(i => { i.value = i.max; });
+}
+
+async function registrarRecepcionUI(btn) {
+  const caja = btn.closest('.rec-oc');
+  const nOC = caja.dataset.noc;
+  const nGuia = caja.querySelector('.rec-guia').value.trim();
+  if (!nGuia) { toast('Indica el N° de la guía de despacho.'); return; }
+  const items = [...caja.querySelectorAll('.rec-cant')].filter(i => Number(i.value) > 0)
+    .map(i => ({ codigo: i.dataset.codigo, cantidad: Number(i.value) }));
+  if (!items.length) { toast('Anota cuánto llegó en al menos una línea.'); return; }
+  if (btn.disabled) return;
+  btn.disabled = true; const t = btn.textContent; btn.textContent = 'Guardando…';
+  try {
+    const res = await callBackend('registrarRecepcion', { nOC, nGuia, items, usuario: currentUser,
+      codBodega: caja.querySelector('.rec-bodega').value, observacion: caja.querySelector('.rec-obs').value });
+    if (!res.ok) { toast('No se guardó: ' + res.error); return; }
+    toast(`${nOC}: recepción ${res.idRecepcion} guardada → ${res.estadoOC}`);
+    cargarOCRecepcion();
+  } finally { btn.disabled = false; btn.textContent = t; }
+}
+
+async function verRecepcionesOC(det, nOC) {
+  const res = await callBackend('listarRecepciones', { nOC });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  det.querySelector('.rec-hist').innerHTML = (res.data || []).length ? (res.data.map(r =>
+    `${esc(r['Fecha'])} · guía <b>${esc(r['N Guia'])}</b> · ${esc(r['Codigo Articulo'])} × ${esc(r['Cantidad Recibida'])} ${esc(r['Unidad'])} → ${esc(r['CodBodega'])} · ${esc(r['Estado Linea'])} · ${esc(r['Recibido Por'])}${r['Observacion'] ? ' · ' + esc(r['Observacion']) : ''}`).join('<br>'))
+    : 'Sin recepciones todavía.';
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
