@@ -332,6 +332,15 @@
         <div id="valor-bodega"></div>
       </div>
       <div class="card">
+        <h3>Precios de referencia por confirmar</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Precios de internet con duda de <b>unidad de medida</b> (se venden en caja, bolsa,
+          pack o rollo), confianza baja o muy distintos a lo pagado. <b>No se usan para valorizar hasta confirmarlos.</b> Revisa que el precio
+          sea por UNA unidad del inventario (ej. caja de 100 a $5.000 → $50 cada una), corrígelo si hace falta y confirma.</p>
+        <button class="secondary" onclick="cargarPreciosPorConfirmar()">Actualizar</button>
+        <span id="pc-total" style="font-size:12px;color:#777;margin-left:6px"></span>
+        <div id="pc-lista"></div>
+      </div>
+      <div class="card">
         <h3>Proveedores por validar</h3>
         <p style="font-size:12px; color:#555; margin:0 0 6px;">Proveedores y datos que la app sacó de cotizaciones. Los valida
           Luis Miranda, Carlos Braun o Claudia Menéndez revisando el documento de origen; se pueden corregir antes de validar.
@@ -412,7 +421,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -517,7 +526,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
     if (btn.dataset.view === 'seguimiento') {
-      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarStockCritico(); cargarPresupuesto();
+      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarPreciosPorConfirmar(); cargarStockCritico(); cargarPresupuesto();
     }
     if (btn.dataset.view === 'comparativo') {
       poblarSelectorRequisicionesComparativo();
@@ -1917,6 +1926,39 @@ async function cargarValorBodega() {
       ${r.articulos.map(a => `<tr><td>${esc(a.codigo)}</td><td>${esc(a.descripcion)}</td><td>${a.stock} ${esc(a.unidad)}</td><td>${a.reservado}</td>
         <td style="font-weight:bold;color:${a.libre ? '#c0392b' : '#777'}">${a.libre}</td><td>${pesosCL(a.valorLibre)}</td><td>${pesosCL(a.valor)}${a.valorEstimado ? ' <span title="estimado con el último precio de compra" style="color:#b9770e">*</span>' : ''}</td>
         <td>${a.loteInicial ? 'antes del ' + esc(r.fechaInicio) : esc(a.desde)}<br><span style="color:#777">${a.diasEnBodega} días</span></td><td>${esc(a.ultimoMovimiento) || '—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+let preciosPorConfirmar = [], pcMostrados = 20;
+async function cargarPreciosPorConfirmar() {
+  const res = await callBackend('listarPreciosPorConfirmar', {});
+  if (!res.ok) { document.getElementById('pc-lista').innerHTML = 'Error: ' + res.error; return; }
+  preciosPorConfirmar = res.data; pcMostrados = 20; pintarPreciosPorConfirmar();
+}
+function pintarPreciosPorConfirmar() {
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  document.getElementById('pc-total').textContent = preciosPorConfirmar.length ? preciosPorConfirmar.length + ' por revisar' : '';
+  document.getElementById('pc-lista').innerHTML = preciosPorConfirmar.length ? preciosPorConfirmar.slice(0, pcMostrados).map((p, i) => `
+    <div class="pc-item" data-codigo="${esc(p.codigo)}" style="border-top:1px solid #eee;padding:8px 0;font-size:12px">
+      <b>${esc(p.codigo)}</b> ${esc(p.descripcion)} · <b>unidad inventario: ${esc(p.unidad || '?')}</b><br>
+      Encontrado: ${esc(p.presentacion) || '—'}${Number(p.unidadesPorPresentacion) > 1 ? ` (${p.unidadesPorPresentacion} unidades)` : ''}
+      ${p.precioPresentacion ? ` a ${pesosCL(p.precioPresentacion)} neto` : ''} · ${esc(p.tienda)}${p.url ? ` · <a href="${esc(p.url)}" target="_blank">ver</a>` : ''}<br>
+      <span style="color:#b9770e">⚠️ ${esc(p.motivo)}</span>${p.nota ? `<br><span style="color:#777">${esc(p.nota)}</span>` : ''}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">
+        Precio por 1 ${esc(p.unidad || 'unidad')}: <input type="number" class="pc-precio" value="${p.precio}" style="width:100px;margin:0">
+        <button class="primary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPrecio(this,'CONFIRMAR')">Confirmar</button>
+        <button class="secondary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPrecio(this,'DESCARTAR')">Descartar</button>
+      </div></div>`).join('') + (preciosPorConfirmar.length > pcMostrados ? `<button class="secondary" style="width:auto" onclick="pcMostrados+=20;pintarPreciosPorConfirmar()">Ver 20 más</button>` : '')
+    : '<p style="color:#888;font-size:12px">No hay precios por confirmar.</p>';
+}
+async function decidirPrecio(btn, decision) {
+  const caja = btn.closest('.pc-item');
+  const codigo = caja.dataset.codigo;
+  btn.disabled = true;
+  const res = await callBackend('confirmarPrecioReferencia', { codigo, decision, precio: caja.querySelector('.pc-precio').value, usuario: currentUser });
+  if (!res.ok) { toast('No se guardó: ' + res.error); btn.disabled = false; return; }
+  preciosPorConfirmar = preciosPorConfirmar.filter(p => p.codigo !== codigo);
+  pintarPreciosPorConfirmar();
+  toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
