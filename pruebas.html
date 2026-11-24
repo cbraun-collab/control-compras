@@ -152,6 +152,10 @@
           <input type="file" id="comp-archivo-multiple" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" onchange="adjuntarCotizacionProveedor(this)">
         </label>
         <div id="comp-proveedores-resumen" style="margin-top:8px;"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="secondary" style="width:auto;margin:0;font-weight:bold;border-width:2px" onclick="buscarOfertasInternetUI(this)">🌐 Buscar en internet</button>
+          <span id="comp-internet-estado" style="font-size:12px;color:#555">Busca el mejor precio de cada ítem en tiendas de Chile: puede aparecer un proveedor nuevo o una oferta puntual.</span>
+        </div>
 
         <h4 style="margin-top:16px;">Cotizaciones por ítem</h4>
         <div id="comp-items"></div>
@@ -2007,6 +2011,65 @@ async function buscarHistorialPrecios() {
         ${a.referencia ? `<br><span style="color:#777">Internet: ${pesosCL(a.referencia.precio)} en ${esc(a.referencia.tienda)}${a.referencia.url ? ` · <a href="${esc(a.referencia.url)}" target="_blank">ver</a>` : ''}</span>` : ''}
       </div></details>`).join('') : '<p style="color:#888;font-size:12px">Sin artículos que coincidan.</p>';
   caja.innerHTML = provs + arts;
+}
+
+/* ---------------- Ofertas de internet en el comparativo (24-11-2026) ---------------- */
+async function buscarOfertasInternetUI(btn) {
+  const nReq = document.getElementById('comp-select-req').value;
+  if (!nReq) { toast('Selecciona una requisición primero.'); return; }
+  const items = comparativoItemsActuales.map(it => ({ codigo: it['Codigo Articulo'], descripcion: it['Descripcion'],
+    cantidad: saldoDe(it['Codigo Articulo']), unidad: it['Unidad'] })).filter(i => i.cantidad > 0);
+  if (!items.length) { toast('No hay ítems por cotizar.'); return; }
+  const estado = document.getElementById('comp-internet-estado');
+  btn.disabled = true; let costo = 0;
+  try {
+    for (let k = 0; k < items.length; k += 3) {
+      estado.innerHTML = `<b style="color:#CF4520">⏳ Buscando en internet… ${Math.min(k + 3, items.length)} de ${items.length} ítems</b>`;
+      const lote = items.slice(k, k + 3);
+      const res = await callBackend('buscarOfertasInternet', { nRequisicion: nReq, items: lote, usuario: currentUser });
+      if (!res.ok) { toast('Búsqueda: ' + res.error); continue; }
+      costo += res.costoUSD || 0;
+      res.items.forEach(it => pintarOfertasItem(it));
+    }
+    estado.textContent = `Búsqueda terminada (costo aprox. US$ ${costo.toFixed(2)}). Revisa las ofertas bajo cada ítem.`;
+  } finally { btn.disabled = false; }
+}
+
+function pintarOfertasItem(it) {
+  const lista = document.querySelector(`.comp-proveedores-lista[data-codigo="${CSS.escape(it.codigo)}"]`);
+  if (!lista) return;
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  let caja = lista.parentElement.querySelector('.internet-ofertas');
+  if (!caja) { caja = document.createElement('div'); caja.className = 'internet-ofertas'; lista.parentElement.insertBefore(caja, lista); }
+  caja.style.cssText = 'background:#f4f9ff;border:1px solid #cfe2f3;border-radius:6px;padding:6px 8px;margin:4px 0;font-size:12px';
+  caja._ofertas = it.ofertas;
+  caja.innerHTML = '<b>🌐 Internet:</b> ' + (it.ofertas.length ? it.ofertas.map((o, i) => `<div style="margin-top:4px">
+      <b>${esc(o.tienda)}</b> · <b>${pesosCL(o.precio)}</b> neto por unidad${o.unidadesPorPresentacion > 1 ? ` (${esc(o.presentacion)})` : ''}
+      ${o.url ? ` · <a href="${esc(o.url)}" target="_blank">ver</a>` : ''}<br><span style="color:#555">${esc(o.envio)}${o.disponibilidad ? ' · ' + esc(o.disponibilidad) : ''}${o.nota ? ' · ' + esc(o.nota) : ''}</span>
+      ${o.avisos.length ? `<br><span style="color:#b9770e;font-weight:bold">⚠️ ${esc(o.avisos.join('; '))}</span>` : ''}
+      <br><button type="button" class="secondary" style="width:auto;margin:2px 0 0;padding:2px 8px;font-size:11px" onclick="agregarOfertaComoCotizacion(this, ${i})">Agregar como cotización</button></div>`).join('')
+    : ' no se encontraron ofertas.');
+}
+
+async function agregarOfertaComoCotizacion(btn, i) {
+  const caja = btn.closest('.internet-ofertas');
+  const o = caja._ofertas[i];
+  const lista = caja.parentElement.querySelector('.comp-proveedores-lista');
+  const codigo = lista.dataset.codigo;
+  if (o.avisos.length && !confirm('Esta oferta tiene avisos (' + o.avisos.join('; ') + ').\n¿Revisaste que ' + pesosCL(o.precio) + ' sea el precio por UNA unidad pedida?')) return;
+  agregarFilaCotizacion(lista.nextElementSibling, codigo);
+  const row = lista.lastElementChild;
+  row.querySelector('.comp-proveedor-buscador').value = o.tienda + ' (internet)';
+  row.querySelector('.comp-proveedor').value = o.tienda;
+  row.querySelector('.comp-precio').value = o.precio;
+  row.querySelector('.comp-plazo').value = (o.envio || '').slice(0, 60);
+  row.dataset.respaldoLink = o.url || '';
+  row.dataset.nota = o.avisos.join('; ');
+  row.dataset.calce = o.avisos.length ? 'media' : 'alta';
+  row.querySelector('.comp-archivo-estado').innerHTML = `Oferta de internet · ${o.url ? `<a href="${o.url}" target="_blank">ver</a>` : ''} · si es un proveedor nuevo queda por validar antes de emitir OC`;
+  btn.disabled = true; btn.textContent = 'Agregada';
+  // Registrar la tienda en FOR-ADQ-002 (si es nueva queda POR VALIDAR; si existe no cambia nada)
+  callBackend('guardarProveedor', { nombreProveedor: o.tienda, rubro: 'Tienda en línea: ' + (o.url || ''), usuario: currentUser });
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
