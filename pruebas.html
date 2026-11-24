@@ -228,6 +228,22 @@
         <div id="fac-trabajo" style="margin-top:10px;"></div>
       </div>
       <div class="card">
+        <h3>Programa de pagos</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Facturas por pagar ordenadas por vencimiento (el que trae la factura,
+          o estimado con el plazo del proveedor). Marca las que vas a pagar y genera una sola planilla para cargar en el banco.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="secondary" style="width:auto;margin:0" onclick="cargarPagos()">Actualizar</button>
+          <span id="pag-sel" style="font-size:13px"></span>
+        </div>
+        <div id="pag-lista" style="margin-top:6px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="primary" style="width:auto;margin:0" onclick="generarNominaUI(this)">Generar planilla de pago</button>
+          <input type="date" id="pag-fecha" style="width:auto;margin:0">
+          <button class="secondary" style="width:auto;margin:0" onclick="marcarPagadasUI(this)">Marcar pagadas</button>
+        </div>
+        <div id="pag-resultado" style="margin-top:6px;font-size:13px"></div>
+      </div>
+      <div class="card">
         <h3>Costo cargado por centro de costo</h3>
         <div id="fac-cc"></div>
         <h3 style="margin-top:14px;">Facturas registradas</h3>
@@ -338,7 +354,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -458,7 +474,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
       cargarOCRecepcion();
     }
     if (btn.dataset.view === 'facturas') {
-      cargarFacturas();
+      cargarFacturas(); cargarPagos();
     }
   });
 });
@@ -1592,6 +1608,54 @@ async function registrarFacturaUI(btn) {
     document.getElementById('fac-trabajo').innerHTML = ''; facturaEnTrabajo = null;
     cargarFacturas();
   } finally { btn.disabled = false; btn.textContent = 'Registrar factura'; }
+}
+
+let pagosActuales = [];
+async function cargarPagos() {
+  const res = await callBackend('listarPagos', {});
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const caja = document.getElementById('pag-lista');
+  if (!res.ok) { caja.innerHTML = 'Error: ' + esc(res.error); return; }
+  pagosActuales = res.data;
+  caja.innerHTML = pagosActuales.length ? `<div style="overflow-x:auto"><table style="font-size:12px">
+    <thead><tr><th></th><th>Vence</th><th>Proveedor</th><th>Folio</th><th>Total</th><th>Estado</th></tr></thead><tbody>
+    ${pagosActuales.map((p, i) => { const d = p.diasParaVencer;
+      const col = d == null ? '#555' : d < 0 ? '#c0392b' : d <= 7 ? '#b9770e' : '#27ae60';
+      const txt = d == null ? '' : d < 0 ? `vencida hace ${-d} día${d === -1 ? '' : 's'}` : d === 0 ? 'vence hoy' : `en ${d} día${d === 1 ? '' : 's'}`;
+      return `<tr><td><input type="checkbox" class="pag-chk" data-i="${i}" style="width:auto;margin:0" onchange="resumenPagos()"></td>
+        <td><b>${esc(p.vencimiento)}</b><br><span style="color:${col}">${txt}</span>${p.origenVencimiento && p.origenVencimiento !== 'factura' ? `<br><span style="color:#999;font-size:10px">estimado (${esc(p.origenVencimiento)})</span>` : ''}</td>
+        <td>${esc(p.proveedor)}<br><span style="color:#777">${esc(p.rut)}</span></td><td>${esc(p.folio)}</td>
+        <td style="text-align:right">${pesosCL(p.total)}</td>
+        <td>${esc(p.estadoPago)}${p.nomina ? '<br><span style="color:#777">' + esc(p.nomina) + '</span>' : ''}</td></tr>`; }).join('')}
+    </tbody></table></div>` : '<p style="color:#888;font-size:12px">No hay facturas por pagar.</p>';
+  resumenPagos();
+}
+function idsPagosMarcados() { return [...document.querySelectorAll('.pag-chk:checked')].map(c => pagosActuales[Number(c.dataset.i)]); }
+function resumenPagos() {
+  const sel = idsPagosMarcados();
+  document.getElementById('pag-sel').innerHTML = sel.length ? `${sel.length} factura${sel.length === 1 ? '' : 's'} · <b>${pesosCL(sel.reduce((s, p) => s + p.total, 0))}</b>` : '';
+}
+async function generarNominaUI(btn) {
+  const sel = idsPagosMarcados(); if (!sel.length) { toast('Marca las facturas a pagar.'); return; }
+  if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Generando…';
+  try {
+    const res = await callBackend('generarNominaPago', { ids: sel.map(p => p.id), usuario: currentUser });
+    if (!res.ok) { toast('Error: ' + res.error); return; }
+    document.getElementById('pag-resultado').innerHTML = `✓ Planilla <b>${res.nomina}</b>: ${res.facturas} facturas, ${pesosCL(res.total)} ·
+      <a href="${res.excel}" target="_blank">Descargar Excel</a> · <a href="${res.url}" target="_blank">Abrir</a>
+      ${res.sinDatosBancarios ? `<br><span style="color:#b9770e">⚠️ ${res.sinDatosBancarios} proveedor(es) sin datos bancarios en FOR-ADQ-002: complétalos en la planilla antes de cargarla en el banco.</span>` : ''}`;
+    cargarPagos();
+  } finally { btn.disabled = false; btn.textContent = 'Generar planilla de pago'; }
+}
+async function marcarPagadasUI(btn) {
+  const sel = idsPagosMarcados(); if (!sel.length) { toast('Marca las facturas pagadas.'); return; }
+  if (!confirm(`¿Marcar ${sel.length} factura(s) como PAGADAS?`)) return;
+  btn.disabled = true;
+  try {
+    const res = await callBackend('marcarFacturasPagadas', { ids: sel.map(p => p.id), fechaPago: document.getElementById('pag-fecha').value, usuario: currentUser });
+    toast(res.ok ? res.marcadas + ' factura(s) marcadas como pagadas.' : 'Error: ' + res.error);
+    cargarPagos();
+  } finally { btn.disabled = false; }
 }
 
 async function cargarFacturas() {
