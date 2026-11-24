@@ -361,6 +361,14 @@
         <div id="pc-lista"></div>
       </div>
       <div class="card">
+        <h3>Pesos y unidades por revisar</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Peso y volumen por UNA unidad del inventario (para estimar fletes). También aparecen
+          las partidas cuyo <b>valor cargado no calza</b> con el precio de internet: revisa si la unidad está bien (caso ferrules). Aquí no se cambia el valor.</p>
+        <button class="secondary" onclick="cargarPesosPorConfirmar()">Actualizar</button>
+        <span id="pp-total" style="font-size:12px;color:#777;margin-left:6px"></span>
+        <div id="pp-lista"></div>
+      </div>
+      <div class="card">
         <h3>Proveedores por validar</h3>
         <p style="font-size:12px; color:#555; margin:0 0 6px;">Proveedores y datos que la app sacó de cotizaciones. Los valida
           Luis Miranda, Carlos Braun o Claudia Menéndez revisando el documento de origen; se pueden corregir antes de validar.
@@ -441,7 +449,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios', 'listarPesosPorConfirmar']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -546,7 +554,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     document.getElementById('view-' + btn.dataset.view).classList.remove('hidden');
     if (btn.dataset.view === 'seguimiento') {
-      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarPreciosPorConfirmar(); cargarStockCritico(); cargarPresupuesto();
+      cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarPreciosPorConfirmar(); cargarPesosPorConfirmar(); cargarStockCritico(); cargarPresupuesto();
     }
     if (btn.dataset.view === 'comparativo') {
       poblarSelectorRequisicionesComparativo();
@@ -1981,6 +1989,43 @@ async function decidirPrecio(btn, decision) {
   if (!res.ok) { toast('No se guardó: ' + res.error); btn.disabled = false; return; }
   preciosPorConfirmar = preciosPorConfirmar.filter(p => p.codigo !== codigo);
   pintarPreciosPorConfirmar();
+  toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
+}
+
+/* ---------------- Pesos y unidades por revisar (24-11-2026) ---------------- */
+let pesosPorConfirmar = [], ppMostrados = 20;
+async function cargarPesosPorConfirmar() {
+  const res = await callBackend('listarPesosPorConfirmar', {});
+  if (!res.ok) { document.getElementById('pp-lista').innerHTML = 'Error: ' + res.error; return; }
+  pesosPorConfirmar = res.data; ppMostrados = 20; pintarPesosPorConfirmar();
+}
+function pintarPesosPorConfirmar() {
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  document.getElementById('pp-total').textContent = pesosPorConfirmar.length ? pesosPorConfirmar.length + ' por revisar' : '';
+  document.getElementById('pp-lista').innerHTML = pesosPorConfirmar.length ? pesosPorConfirmar.slice(0, ppMostrados).map(p => `
+    <div class="pp-item" data-codigo="${esc(p.codigo)}" style="border-top:1px solid #eee;padding:8px 0;font-size:12px">
+      <b>${esc(p.codigo)}</b> ${esc(p.descripcion)} · <b>unidad inventario: ${esc(p.unidad || '?')}</b><br>
+      Encontrado: ${esc(p.presentacion) || '—'}${p.unidadesPorPresentacion > 1 ? ` (${p.unidadesPorPresentacion} unidades)` : ''}
+      ${p.pesoPresentacionKg ? ` · envase ${p.pesoPresentacionKg} kg` : ''}${p.valorConocido ? ` · valor cargado ${pesosCL(p.valorConocido)}` : ''}
+      ${p.precioInternet ? ` · internet ${pesosCL(p.precioInternet)}` : ''} · ${esc(p.tienda)}${p.url ? ` · <a href="${esc(p.url)}" target="_blank">ver</a>` : ''}<br>
+      <span style="color:#b9770e">⚠️ ${esc(p.motivo)}</span>${p.nota ? `<br><span style="color:#777">${esc(p.nota)}</span>` : ''}
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">
+        Peso por 1 ${esc(p.unidad || 'unidad')} (kg): <input type="number" step="any" class="pp-peso" value="${p.pesoKg || ''}" style="width:90px;margin:0">
+        Volumen (m³): <input type="number" step="any" class="pp-vol" value="${p.volumenM3 || ''}" style="width:90px;margin:0">
+        <button class="primary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPeso(this,'CONFIRMAR')">Confirmar</button>
+        <button class="secondary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPeso(this,'DESCARTAR')">Descartar</button>
+      </div></div>`).join('') + (pesosPorConfirmar.length > ppMostrados ? `<button class="secondary" style="width:auto" onclick="ppMostrados+=20;pintarPesosPorConfirmar()">Ver 20 más</button>` : '')
+    : '<p style="color:#888;font-size:12px">No hay pesos ni unidades por revisar.</p>';
+}
+async function decidirPeso(btn, decision) {
+  const caja = btn.closest('.pp-item');
+  const codigo = caja.dataset.codigo;
+  btn.disabled = true;
+  const res = await callBackend('confirmarPesoArticulo', { codigo, decision, pesoKg: caja.querySelector('.pp-peso').value,
+    volumenM3: caja.querySelector('.pp-vol').value, usuario: currentUser });
+  if (!res.ok) { toast('No se guardó: ' + res.error); btn.disabled = false; return; }
+  pesosPorConfirmar = pesosPorConfirmar.filter(p => p.codigo !== codigo);
+  pintarPesosPorConfirmar();
   toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
 }
 
