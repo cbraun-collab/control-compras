@@ -60,6 +60,7 @@
     <button class="tab" data-view="comparativo">Comparativo</button>
     <button class="tab" data-view="oc">OC</button>
     <button class="tab" data-view="recepcion">Recepción</button>
+    <button class="tab" data-view="entrega">Entrega</button>
     <button class="tab" data-view="facturas">Facturas</button>
     <button class="tab" data-view="trazabilidad">Trazabilidad</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
@@ -213,6 +214,38 @@
           <button class="secondary" onclick="cargarOCRecepcion()" style="width:auto; margin:0;">Buscar</button>
         </div>
         <div id="rec-lista" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
+    <!-- ===================== VISTA: ENTREGA EN OBRA (Bodega) ===================== -->
+    <section id="view-entrega" class="view hidden">
+      <div class="card">
+        <h3>Entrega de materiales a obra</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Busca la requisición (o la obra, o el código). Aparece lo que está listo para
+          entregar: lo reservado desde stock y lo comprado que ya llegó. Anota cuánto entregas, quién recibe y pídele que firme en la pantalla.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="ent-buscar" placeholder="REQ, obra, centro de costo o código…" style="flex:1; min-width:200px; margin:0;"
+                 onkeydown="if(event.key==='Enter') cargarParaEntrega()">
+          <button class="secondary" onclick="cargarParaEntrega()" style="width:auto; margin:0;">Buscar</button>
+        </div>
+        <div id="ent-lista" style="margin-top:10px;"></div>
+      </div>
+      <div class="card">
+        <h3>Préstamos y cesiones entre obras</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Si una obra necesita material que está en bodega reservado para otra, el
+          ingeniero dueño (o Luis, Carlos o Claudia) puede <b>prestarlo</b> (se devuelve solo cuando llega la compra de la obra que lo
+          pidió prestado) o <b>cederlo</b> (ya no lo necesita; el costo pasa a la otra obra). Después se retira con una entrega normal.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px">
+          <label style="font-size:11px;margin:0">Requisición que presta<input id="pre-origen" placeholder="REQ-0023" style="margin:0"></label>
+          <label style="font-size:11px;margin:0">Código<input id="pre-codigo" placeholder="MAT017006" style="margin:0"></label>
+          <label style="font-size:11px;margin:0">Cantidad<input id="pre-cant" type="number" step="any" style="margin:0"></label>
+          <label style="font-size:11px;margin:0">Requisición que recibe<input id="pre-destino" placeholder="REQ-0025" style="margin:0"></label>
+          <label style="font-size:11px;margin:0">Tipo<select id="pre-tipo" style="margin:0"><option value="PRESTAMO">Préstamo (con devolución)</option><option value="CESION">Cesión (no vuelve)</option></select></label>
+          <label style="font-size:11px;margin:0">Motivo<input id="pre-motivo" style="margin:0"></label>
+        </div>
+        <button class="primary" style="width:auto;margin:8px 0 0" onclick="prestarUI(this)">Registrar</button>
+        <h4 style="margin:12px 0 4px">Préstamos pendientes de devolución</h4>
+        <div id="pre-lista"></div>
       </div>
     </section>
 
@@ -371,7 +404,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -489,6 +522,9 @@ document.querySelectorAll('nav .tab').forEach(btn => {
     }
     if (btn.dataset.view === 'recepcion') {
       cargarOCRecepcion();
+    }
+    if (btn.dataset.view === 'entrega') {
+      cargarParaEntrega(); cargarPrestamos();
     }
     if (btn.dataset.view === 'facturas') {
       cargarFacturas(); cargarPagos();
@@ -1694,7 +1730,8 @@ async function cargarFacturas() {
 
 /* ---------------- Trazabilidad por producto (24-11-2026) ---------------- */
 const COLOR_ESTADO_LINEA = { 'PEDIDA': '#7f8c8d', 'REVISADA BODEGA': '#7f8c8d', 'COTIZADA': '#2980b9', 'EN OC': '#b9770e',
-  'RECIBIDA PARCIAL': '#d35400', 'RECIBIDA': '#16a085', 'FACTURADA': '#27ae60', 'CUBIERTA CON STOCK': '#27ae60', 'ANULADA': '#c0392b' };
+  'RECIBIDA PARCIAL': '#d35400', 'RECIBIDA': '#16a085', 'FACTURADA': '#27ae60', 'CUBIERTA CON STOCK': '#27ae60', 'ANULADA': '#c0392b',
+  'ENTREGA PARCIAL': '#8e44ad', 'ENTREGADA': '#1e8449' };
 
 async function buscarTrazabilidad() {
   const caja = document.getElementById('tz-resultado');
@@ -1722,7 +1759,7 @@ function lineaTrazabilidadHTML(l, esc) {
   const pasos = [
     ['Pedido', true], ['Bodega', l.cubiertaStock > 0 || l.estado !== 'PEDIDA'], ['Cotización', l.cotizaciones > 0 || l.aComprar === 0],
     ['OC', l.enOC > 0 || l.aComprar === 0], ['Recibido', (l.recibida >= l.aComprar && l.aComprar > 0) || l.aComprar === 0, l.recibida > 0],
-    ['Factura', l.facturada > 0 && l.facturada >= l.recibida && l.recibida > 0, l.facturada > 0], ['Entregado en obra', false]];
+    ['Factura', l.facturada > 0 && l.facturada >= l.recibida && l.recibida > 0, l.facturada > 0], ['Entregado en obra', l.entregada >= l.pedida && l.pedida > 0, l.entregada > 0]];
   const barra = pasos.map(([n, hecho, parcial]) => `<span title="${n}" style="display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:3px;background:${hecho ? '#27ae60' : parcial ? '#f39c12' : '#ddd'}"></span>`).join('');
   const det = [];
   det.push(`<b>1. Pedido:</b> ${l.pedida} ${esc(l.unidad)}`);
@@ -1733,13 +1770,127 @@ function lineaTrazabilidadHTML(l, esc) {
     det.push(`<b>5. Recepción:</b> ${l.recepciones.length ? `${l.recibida} de ${l.enOC || l.aComprar}<br>` + l.recepciones.map(x => `guía ${esc(x.guia)} · ${x.cantidad} · ${esc(x.fecha)} · ${esc(x.bodega)} · ${esc(x.por)}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
     det.push(`<b>6. Factura:</b> ${l.facturas.length ? l.facturas.map(x => `folio ${esc(x.folio)} · ${x.cantidad} · ${pesosCL(x.neto)} → ${esc(x.cc)} · ${esc(x.estado)}${x.estadoPago ? ' · ' + esc(x.estadoPago) : ''}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
   }
-  det.push(`<b>7. Entrega en obra:</b> <span style="color:#999">se registrará cuando esté la salida de bodega con firma</span>`);
+  if ((l.prestados || []).length || (l.recibidosPrestados || []).length) det.push(`<b>↔ Préstamos:</b> ` +
+    (l.prestados || []).map(p => `${p.tipo === 'CESION' ? 'cedió' : 'prestó'} ${p.cantidad} a ${esc(p.otraReq)} (${esc(p.otraObra)}) · ${esc(p.estado)}${p.tipo === 'PRESTAMO' ? ' · devuelto ' + p.devuelta : ''} · ${esc(p.id)}`)
+      .concat((l.recibidosPrestados || []).map(p => `${p.tipo === 'CESION' ? 'recibió cedido' : 'recibió prestado'} ${p.cantidad} de ${esc(p.otraReq)} (${esc(p.otraObra)}) · ${esc(p.estado)} · ${esc(p.id)}`)).join('<br>'));
+  det.push(`<b>7. Entrega en obra:</b> ${l.entregas && l.entregas.length ? `${l.entregada} de ${l.pedida}<br>` + l.entregas.map(x => `${esc(x.id)} · ${x.cantidad} · ${esc(x.fecha)} · recibió ${esc(x.recibe)}${x.firma ? ` · <a href="${esc(x.firma)}" target="_blank">firma</a>` : ''}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
   const color = COLOR_ESTADO_LINEA[l.estado] || '#555';
   return `<details style="border-top:1px solid #eee;padding:6px 0;font-size:12px">
     <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap">
       <span><b>${esc(l.codigo)}</b> ${esc(l.descripcion)}</span>
       <span>${barra}<span style="color:${color};font-weight:bold;margin-left:4px">${esc(l.estado)}</span></span></summary>
     <div style="margin:6px 0 0 8px;line-height:1.6">${det.join('<br>')}</div></details>`;
+}
+
+/* ---------------- Entrega en obra con firma (24-11-2026) ---------------- */
+async function cargarParaEntrega() {
+  const caja = document.getElementById('ent-lista');
+  caja.innerHTML = '<p style="color:#888;font-size:12px">Buscando…</p>';
+  const res = await callBackend('listarParaEntrega', { termino: document.getElementById('ent-buscar').value });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!res.ok) { caja.innerHTML = '<p style="color:#c0392b">' + esc(res.error) + '</p>'; return; }
+  if (!res.data.length) { caja.innerHTML = '<p style="color:#888;font-size:12px">No hay material listo para entregar que coincida.</p>'; return; }
+  caja.innerHTML = res.data.map((r, k) => `
+    <div class="ent-req" data-nreq="${esc(r.nReq)}" style="border:1px solid #ddd;border-radius:8px;padding:10px;margin-top:10px">
+      <b style="color:var(--teal)">${esc(r.nReq)} — ${esc(r.obra)}</b>
+      <div style="font-size:12px;color:#777">${esc(r.centroCosto)} · ${esc(r.solicitante)} · ${esc(r.estado)}</div>
+      <div style="overflow-x:auto"><table style="margin-top:6px;font-size:12px">
+        <thead><tr><th>Código</th><th>Descripción</th><th>Pedido</th><th>Entregado</th><th>Listo</th><th>Entregar</th></tr></thead>
+        <tbody>${r.lineas.filter(l => l.listo > 0 || l.entregada > 0).map(l => `<tr>
+          <td>${esc(l.codigo)}</td><td>${esc(l.descripcion)}</td><td>${l.pedida} ${esc(l.unidad)}</td><td>${l.entregada}</td>
+          <td style="font-weight:bold;color:${l.listo ? '#16a085' : '#999'}">${l.listo}</td>
+          <td>${l.listo ? `<input type="number" class="ent-cant" data-codigo="${esc(l.codigo)}" min="0" max="${l.listo}" step="any" placeholder="0"
+               style="width:70px;margin:0" oninput="if(Number(this.value)>Number(this.max)){this.value=this.max;toast('Solo hay '+this.max+' listos.')}">` : ''}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <button type="button" class="secondary" style="width:auto;margin:6px 0 0" onclick="this.closest('.ent-req').querySelectorAll('.ent-cant').forEach(i=>i.value=i.max)">Entregar todo lo listo</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <label style="font-size:11px;margin:0;flex:1;min-width:160px">Recibe (nombre) *<input class="ent-recibe" style="margin:0"></label>
+        <label style="font-size:11px;margin:0">RUT<input class="ent-rut" style="max-width:130px;margin:0"></label>
+        <label style="font-size:11px;margin:0;flex:1;min-width:160px">Observación<input class="ent-obs" style="margin:0"></label>
+      </div>
+      <div style="font-size:11px;margin-top:8px">Firma de quien recibe *</div>
+      <canvas class="ent-firma" style="width:100%;max-width:420px;height:140px;border:1px dashed #999;border-radius:6px;background:#fff;touch-action:none"></canvas>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <button type="button" class="secondary" style="width:auto;margin:0" onclick="limpiarFirma(this.closest('.ent-req'))">Borrar firma</button>
+        <button type="button" class="primary" style="width:auto;margin:0" onclick="registrarEntregaUI(this)">Registrar entrega</button>
+      </div>
+    </div>`).join('');
+  caja.querySelectorAll('.ent-req').forEach(prepararFirma);
+}
+
+// Firma en pantalla (dedo o mouse). Se dimensiona al mostrarse y se pinta fondo blanco (lección 22).
+function prepararFirma(caja) {
+  const c = caja.querySelector('.ent-firma');
+  const ratio = window.devicePixelRatio || 1;
+  c.width = c.clientWidth * ratio; c.height = c.clientHeight * ratio;
+  const ctx = c.getContext('2d');
+  ctx.scale(ratio, ratio); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
+  let dibujando = false; c.dataset.trazos = '0';
+  const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  c.addEventListener('pointerdown', e => { dibujando = true; c.setPointerCapture(e.pointerId); const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); });
+  c.addEventListener('pointermove', e => { if (!dibujando) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); c.dataset.trazos = String(Number(c.dataset.trazos) + 1); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => c.addEventListener(ev, () => { dibujando = false; }));
+}
+function limpiarFirma(caja) { prepararFirma(caja); }
+
+async function registrarEntregaUI(btn) {
+  const caja = btn.closest('.ent-req');
+  const items = [...caja.querySelectorAll('.ent-cant')].filter(i => Number(i.value) > 0).map(i => ({ codigo: i.dataset.codigo, cantidad: Number(i.value) }));
+  if (!items.length) { toast('Anota cuánto entregas en al menos una línea.'); return; }
+  const recibe = caja.querySelector('.ent-recibe').value.trim();
+  if (!recibe) { toast('Indica quién recibe.'); return; }
+  const c = caja.querySelector('.ent-firma');
+  if (Number(c.dataset.trazos) < 5) { toast('Falta la firma de quien recibe.'); return; }
+  if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const res = await callBackend('registrarEntrega', { nReq: caja.dataset.nreq, items, recibe, rutRecibe: caja.querySelector('.ent-rut').value,
+      observacion: caja.querySelector('.ent-obs').value, firmaBase64: c.toDataURL('image/png').split(',')[1], usuario: currentUser });
+    if (!res.ok) { toast('No se guardó: ' + res.error); return; }
+    toast(`${res.idEntrega} registrada → ${res.estadoReq}`);
+    cargarParaEntrega();
+  } finally { btn.disabled = false; btn.textContent = 'Registrar entrega'; }
+}
+
+/* ---------------- Préstamos y cesiones entre obras (24-11-2026) ---------------- */
+async function prestarUI(btn) {
+  const v = id => document.getElementById(id).value.trim();
+  const payload = { reqOrigen: v('pre-origen').toUpperCase(), reqDestino: v('pre-destino').toUpperCase(), codigo: v('pre-codigo').toUpperCase(),
+    cantidad: Number(v('pre-cant')), tipo: v('pre-tipo'), motivo: v('pre-motivo'), usuario: currentUser };
+  if (!payload.reqOrigen || !payload.reqDestino || !payload.codigo || !payload.cantidad) { toast('Completa requisiciones, código y cantidad.'); return; }
+  const texto = payload.tipo === 'CESION' ? 'ceder (no vuelve)' : 'prestar';
+  if (!confirm(`¿${texto} ${payload.cantidad} de ${payload.codigo} de ${payload.reqOrigen} a ${payload.reqDestino}?`)) return;
+  btn.disabled = true;
+  try {
+    const res = await callBackend('prestarMaterial', payload);
+    if (!res.ok) { toast('No se registró: ' + res.error); return; }
+    toast(`${res.id} registrado. ${payload.reqDestino} ya puede retirarlo con una entrega.`);
+    ['pre-cant', 'pre-motivo'].forEach(id => document.getElementById(id).value = '');
+    cargarPrestamos(); cargarParaEntrega();
+  } finally { btn.disabled = false; }
+}
+
+async function cargarPrestamos() {
+  const res = await callBackend('listarPrestamos', { soloPendientes: true });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const caja = document.getElementById('pre-lista');
+  if (!res.ok) { caja.innerHTML = esc(res.error); return; }
+  caja.innerHTML = res.data.length ? res.data.map(p => `<div style="border-top:1px solid #eee;padding:6px 0;font-size:12px">
+      <b>${esc(p['ID Prestamo'])}</b> · ${esc(p['Codigo Articulo'])} ${esc(p['Descripcion'])} · <b>faltan ${p.pendiente}</b> de ${esc(p['Cantidad'])} ${esc(p['Unidad'])}<br>
+      ${esc(p['REQ Origen'])} (${esc(p['Obra Origen'])}) → ${esc(p['REQ Destino'])} (${esc(p['Obra Destino'])}) · ${esc(p['Fecha'])} · hace ${p.dias ?? '?'} días
+      <button class="secondary" style="width:auto;margin:0 0 0 6px;padding:2px 8px;font-size:11px" onclick="devolverUI('${esc(p['ID Prestamo'])}', this)">Devolver</button></div>`).join('')
+    : '<p style="color:#888;font-size:12px">No hay préstamos pendientes.</p>';
+}
+
+async function devolverUI(id, btn) {
+  const cant = prompt('¿Cuánto se devuelve? (vacío = todo lo pendiente). Sale de lo que la obra que pidió prestado tiene en bodega.', '');
+  if (cant === null) return;
+  btn.disabled = true;
+  try {
+    const res = await callBackend('devolverPrestamo', { idPrestamo: id, cantidad: cant ? Number(cant) : null, usuario: currentUser });
+    toast(res.ok ? `Devueltos ${res.devuelto}; faltan ${res.pendiente}.` : 'No se devolvió: ' + res.error);
+    cargarPrestamos(); cargarParaEntrega();
+  } finally { btn.disabled = false; }
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
