@@ -61,6 +61,7 @@
     <button class="tab" data-view="oc">OC</button>
     <button class="tab" data-view="recepcion">Recepción</button>
     <button class="tab" data-view="facturas">Facturas</button>
+    <button class="tab" data-view="trazabilidad">Trazabilidad</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
   </nav>
 
@@ -252,6 +253,22 @@
       </div>
     </section>
 
+    <!-- ===================== VISTA: TRAZABILIDAD ===================== -->
+    <section id="view-trazabilidad" class="view hidden">
+      <div class="card">
+        <h3>Trazabilidad por producto</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Busca por requisición, OC, código, descripción, obra, centro de costo,
+          proveedor, guía de despacho o folio de factura. Cada línea muestra su recorrido: pedido → Bodega → cotización → OC →
+          recepción → factura → entrega en obra. Toca una línea para ver el detalle.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="tz-buscar" placeholder="REQ-0023, OC-2026-0002, MAT017006, cable, Magallanes, 77755…" style="flex:1; min-width:200px; margin:0;"
+                 onkeydown="if(event.key==='Enter') buscarTrazabilidad()">
+          <button class="primary" onclick="buscarTrazabilidad()" style="width:auto; margin:0;">Buscar</button>
+        </div>
+        <div id="tz-resultado" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
     <!-- ===================== VISTA: SEGUIMIENTO ===================== -->
     <section id="view-seguimiento" class="view hidden">
       <div class="card">
@@ -354,7 +371,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -1673,6 +1690,56 @@ async function cargarFacturas() {
       <td style="color:${color[f['Estado']] || '#222'};font-weight:bold">${esc(f['Estado'])}</td>
       <td>${f.detalle.map(d => `${esc(d.oc)} · ${esc(d.codigo)} × ${d.cantidad} → ${esc(d.cc)}${Math.abs(d.difPrecio) > 0.5 ? ` <span style="color:#c0392b">(precio ${d.difPrecio > 0 ? '+' : ''}${pesosCL(d.difPrecio)} vs OC)</span>` : ''}`).join('<br>') || esc(f['Observacion'])}</td></tr>`).join('')}
     </tbody></table></div>` : '<p style="color:#888;font-size:12px">No hay facturas registradas.</p>';
+}
+
+/* ---------------- Trazabilidad por producto (24-11-2026) ---------------- */
+const COLOR_ESTADO_LINEA = { 'PEDIDA': '#7f8c8d', 'REVISADA BODEGA': '#7f8c8d', 'COTIZADA': '#2980b9', 'EN OC': '#b9770e',
+  'RECIBIDA PARCIAL': '#d35400', 'RECIBIDA': '#16a085', 'FACTURADA': '#27ae60', 'CUBIERTA CON STOCK': '#27ae60', 'ANULADA': '#c0392b' };
+
+async function buscarTrazabilidad() {
+  const caja = document.getElementById('tz-resultado');
+  const termino = document.getElementById('tz-buscar').value.trim();
+  if (termino.length < 2) { toast('Escribe al menos 2 caracteres.'); return; }
+  caja.innerHTML = '<p style="color:#888;font-size:12px">Buscando…</p>';
+  const res = await callBackend('trazabilidad', { termino });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (!res.ok) { caja.innerHTML = '<p style="color:#c0392b">' + esc(res.error) + '</p>'; return; }
+  if (!res.data.length) { caja.innerHTML = '<p style="color:#888;font-size:12px">No se encontró nada con «' + esc(termino) + '».</p>'; return; }
+  caja.innerHTML = (res.total > res.data.length ? `<p style="font-size:12px;color:#777">Se muestran ${res.data.length} de ${res.total} requisiciones; afina la búsqueda.</p>` : '') +
+    res.data.map(r => `
+    <div style="border:1px solid #ddd;border-radius:8px;padding:10px;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <b style="color:var(--teal)">${esc(r.nReq)} — ${esc(r.obra)}</b><span style="font-size:12px">${esc(r.estado)}</span></div>
+      <div style="font-size:12px;color:#777">${esc(r.centroCosto)} · ${esc(r.solicitante)} · criticidad ${esc(r.criticidad)}${r.ocs.length ? ' · ' + r.ocs.map(esc).join(', ') : ''}</div>
+      <div style="font-size:12px;color:#555;margin-top:2px">Solicitada ${esc(r.fechaSolicitud)}${r.fechaBodega ? ' · Bodega ' + esc(r.fechaBodega) : ''}${r.fechaCotizacion ? ' · cotizada ' + esc(r.fechaCotizacion) : ''} · necesaria en obra <b>${esc(r.fechaNecesaria)}</b></div>
+      <div style="font-size:12px;margin:4px 0">${r.resumen.recibidas} de ${r.resumen.lineas} líneas recibidas o cubiertas${r.resumen.costo ? ' · costo facturado <b>' + pesosCL(r.resumen.costo) + '</b>' : ''}</div>
+      ${r.lineas.map(l => lineaTrazabilidadHTML(l, esc)).join('')}
+    </div>`).join('');
+}
+
+function lineaTrazabilidadHTML(l, esc) {
+  const ok = c => c ? '#27ae60' : '#ccc';
+  const pasos = [
+    ['Pedido', true], ['Bodega', l.cubiertaStock > 0 || l.estado !== 'PEDIDA'], ['Cotización', l.cotizaciones > 0 || l.aComprar === 0],
+    ['OC', l.enOC > 0 || l.aComprar === 0], ['Recibido', (l.recibida >= l.aComprar && l.aComprar > 0) || l.aComprar === 0, l.recibida > 0],
+    ['Factura', l.facturada > 0 && l.facturada >= l.recibida && l.recibida > 0, l.facturada > 0], ['Entregado en obra', false]];
+  const barra = pasos.map(([n, hecho, parcial]) => `<span title="${n}" style="display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:3px;background:${hecho ? '#27ae60' : parcial ? '#f39c12' : '#ddd'}"></span>`).join('');
+  const det = [];
+  det.push(`<b>1. Pedido:</b> ${l.pedida} ${esc(l.unidad)}`);
+  det.push(`<b>2. Bodega:</b> ${l.cubiertaStock ? `${l.cubiertaStock} desde stock${l.reservadaActiva ? ` (reservado ${l.reservadaActiva})` : ''}` : 'sin stock'}${l.aComprar ? ` · <b>a comprar ${l.aComprar}</b>` : ' · no se compra'}`);
+  if (l.aComprar) {
+    det.push(`<b>3. Cotización:</b> ${l.cotizaciones ? `${l.cotizaciones} cotización(es)${l.ganador ? ` · ganó ${esc(l.ganador.proveedor)} a ${pesosCL(l.ganador.precio)} (${esc(l.ganador.plazo)})` : ''}` : '<span style="color:#999">pendiente</span>'}`);
+    det.push(`<b>4. OC:</b> ${l.ocs.length ? l.ocs.map(o => `${esc(o.nOC)} · ${esc(o.proveedor)} · ${o.cantidad} a ${pesosCL(o.precio)} · emitida ${esc(o.fecha)}, requerida ${esc(o.requerida)} · ${esc(o.estado)}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
+    det.push(`<b>5. Recepción:</b> ${l.recepciones.length ? `${l.recibida} de ${l.enOC || l.aComprar}<br>` + l.recepciones.map(x => `guía ${esc(x.guia)} · ${x.cantidad} · ${esc(x.fecha)} · ${esc(x.bodega)} · ${esc(x.por)}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
+    det.push(`<b>6. Factura:</b> ${l.facturas.length ? l.facturas.map(x => `folio ${esc(x.folio)} · ${x.cantidad} · ${pesosCL(x.neto)} → ${esc(x.cc)} · ${esc(x.estado)}${x.estadoPago ? ' · ' + esc(x.estadoPago) : ''}`).join('<br>') : '<span style="color:#999">pendiente</span>'}`);
+  }
+  det.push(`<b>7. Entrega en obra:</b> <span style="color:#999">se registrará cuando esté la salida de bodega con firma</span>`);
+  const color = COLOR_ESTADO_LINEA[l.estado] || '#555';
+  return `<details style="border-top:1px solid #eee;padding:6px 0;font-size:12px">
+    <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap">
+      <span><b>${esc(l.codigo)}</b> ${esc(l.descripcion)}</span>
+      <span>${barra}<span style="color:${color};font-weight:bold;margin-left:4px">${esc(l.estado)}</span></span></summary>
+    <div style="margin:6px 0 0 8px;line-height:1.6">${det.join('<br>')}</div></details>`;
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
