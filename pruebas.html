@@ -134,6 +134,15 @@
     <!-- ===================== VISTA: COMPARATIVO ===================== -->
     <section id="view-comparativo" class="view hidden">
       <div class="card">
+        <h3>Cola de cotización (solicitudes consolidadas)</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 6px;">Lo que Bodega no tiene entra aquí y sale a los proveedores validados del rubro en
+          dos cortes diarios, <b>12:30 y 18:00</b> (lunes a viernes): <b>un solo correo por proveedor</b>, sumando las cantidades del mismo código
+          de distintas requisiciones. Lo de criticidad <b>Alta</b> sale al tiro. La OC se emite igual por obra.</p>
+        <button class="secondary" onclick="cargarColaCotizacion()" style="width:auto">Actualizar</button>
+        <button class="secondary" onclick="enviarColaAhoraUI(this)" style="width:auto">Enviar ahora lo que está en cola</button>
+        <div id="cola-cot"></div>
+      </div>
+      <div class="card">
         <h3>Comparativo de Proveedores</h3>
         <label>Selecciona la Requisición</label>
         <select id="comp-select-req" onchange="cargarRequisicionEnComparativo()">
@@ -449,7 +458,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios', 'listarPesosPorConfirmar']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios', 'listarPesosPorConfirmar', 'listarColaCotizacion']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -557,7 +566,7 @@ document.querySelectorAll('nav .tab').forEach(btn => {
       cargarRequisiciones(); cargarOC(); cargarReservas(); cargarProveedoresPorValidar(); cargarValorBodega(); cargarPreciosPorConfirmar(); cargarPesosPorConfirmar(); cargarStockCritico(); cargarPresupuesto();
     }
     if (btn.dataset.view === 'comparativo') {
-      poblarSelectorRequisicionesComparativo();
+      poblarSelectorRequisicionesComparativo(); cargarColaCotizacion();
     }
     if (btn.dataset.view === 'oc') {
       poblarSelectorRequisicionesOC();
@@ -1992,6 +2001,45 @@ async function decidirPrecio(btn, decision) {
   toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
 }
 
+/* ---------------- Cola de cotización consolidada (24-11-2026) ---------------- */
+let colaRubros = [];
+async function cargarColaCotizacion() {
+  const caja = document.getElementById('cola-cot');
+  const res = await callBackend('listarColaCotizacion', {});
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!res.ok) { caja.innerHTML = '<p style="color:#c0392b">' + esc(res.error) + '</p>'; return; }
+  colaRubros = res.rubros;
+  // Vista previa de la consolidación: por código, cantidades sumadas
+  const porCod = {};
+  res.cola.forEach(l => { const x = porCod[l.codigo] = porCod[l.codigo] || { l: l, total: 0, reqs: [] }; x.total += l.cantidad; x.reqs.push(l.nReq + ' (' + l.cantidad + ')'); });
+  const opciones = r => '<option value="">— asignar rubro —</option>' + colaRubros.map(x => `<option value="${esc(x.clave)}" ${x.clave === r ? 'selected' : ''}>${esc(x.clave)} · ${x.proveedores} prov.</option>`).join('');
+  caja.innerHTML = (res.cola.length ? `<p style="font-size:12px;margin:8px 0 4px"><b>${res.cola.length} línea(s) en cola</b> → ${Object.keys(porCod).length} código(s) consolidados</p>
+    <div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Código</th><th>Descripción</th><th>Total</th><th>Requisiciones</th><th>Rubro</th></tr></thead><tbody>
+    ${Object.keys(porCod).map(k => { const x = porCod[k]; return `<tr><td>${esc(k)}</td><td>${esc(x.l.descripcion)}</td><td><b>${x.total}</b> ${esc(x.l.unidad)}</td>
+      <td>${esc(x.reqs.join(' + '))}</td><td>${x.l.rubro ? esc(x.l.rubro) : `<select onchange="asignarRubroUI('${esc(k)}', this.value)" style="margin:0;font-size:11px">${opciones('')}</select>`}
+      ${x.l.motivo ? `<br><span style="color:#b9770e">${esc(x.l.motivo)}</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+    : '<p style="color:#888;font-size:12px">No hay nada en cola.</p>') +
+    (res.enviadas.length ? `<details style="margin-top:8px;font-size:12px"><summary style="cursor:pointer">Últimas solicitudes enviadas</summary>
+      ${res.enviadas.map(s => `<div style="border-top:1px solid #eee;padding:3px 0"><b>${esc(s.nSC)}</b> · ${esc(s.fecha)} · ${esc(s.tipo)} · ${esc(s.proveedor)} · ${s.lineas} ítem(s) · ${esc(s.requisiciones)}</div>`).join('')}</details>` : '');
+}
+async function asignarRubroUI(codigo, rubro) {
+  if (!rubro) return;
+  const res = await callBackend('asignarRubroCola', { codigo, rubro, usuario: currentUser });
+  if (!res.ok) { toast(res.error); return; }
+  toast('Rubro guardado para la familia ' + res.familia + ' (se usará siempre de aquí en adelante).');
+  cargarColaCotizacion();
+}
+async function enviarColaAhoraUI(btn) {
+  if (!confirm('¿Enviar ahora todo lo que está en cola, sin esperar el corte de las 12:30 / 18:00?')) return;
+  btn.disabled = true;
+  try {
+    const res = await callBackend('enviarColaAhora', { usuario: currentUser });
+    if (!res.ok) { toast(res.error); return; }
+    toast(res.enviadas.length ? res.nSolicitud + ' enviada a ' + res.enviadas.length + ' proveedor(es).' : 'No salió nada: revisa los rubros pendientes.');
+    cargarColaCotizacion();
+  } finally { btn.disabled = false; }
+}
+
 /* ---------------- Pesos y unidades por revisar (24-11-2026) ---------------- */
 let pesosPorConfirmar = [], ppMostrados = 20;
 async function cargarPesosPorConfirmar() {
@@ -2310,7 +2358,10 @@ async function enviarRevisionDisponibilidad() {
   try {
     const res = await callBackend('revisarDisponibilidad', { nRequisicion: nReq, usuario: currentUser, items });
     if (res.ok) {
-      toast('Revisión guardada. Lo disponible quedó reservado para esta requisición.');
+      const cola = res.cola || {};
+      toast('Revisión guardada. Lo disponible quedó reservado.' + (cola.urgente && cola.urgente.enviadas && cola.urgente.enviadas.length
+        ? ' Criticidad Alta: lo faltante ya salió a cotizar (' + cola.urgente.nSolicitud + ').'
+        : (cola.encoladas ? ' Lo faltante (' + cola.encoladas + ' línea(s)) sale a cotizar en el próximo corte (12:30 o 18:00).' : '')));
       // Limpia la pantalla para evitar confusión y una segunda carga
       document.getElementById('bodega-select-req').value = '';
       document.getElementById('bodega-tabla-items').innerHTML = '';
