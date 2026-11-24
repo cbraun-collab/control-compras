@@ -63,6 +63,7 @@
     <button class="tab" data-view="entrega">Entrega</button>
     <button class="tab" data-view="facturas">Facturas</button>
     <button class="tab" data-view="trazabilidad">Trazabilidad</button>
+    <button class="tab" data-view="precios">Precios</button>
     <button class="tab" data-view="seguimiento">Seguimiento</button>
   </nav>
 
@@ -302,6 +303,21 @@
       </div>
     </section>
 
+    <!-- ===================== VISTA: PRECIOS (negociación) ===================== -->
+    <section id="view-precios" class="view hidden">
+      <div class="card">
+        <h3>Historial de precios y proveedores</h3>
+        <p style="font-size:12px; color:#555; margin:0 0 8px;">Para negociar: por artículo, todas las cotizaciones, lo pagado en OC y factura, la
+          referencia de internet y el mejor precio visto; por proveedor, cuánto le compramos y si sus precios suelen estar sobre o bajo los de otros.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <input id="hp-buscar" placeholder="Código, descripción o proveedor (ej. cable, MAT017006, Magallanes)" style="flex:1; min-width:200px; margin:0;"
+                 onkeydown="if(event.key==='Enter') buscarHistorialPrecios()">
+          <button class="primary" onclick="buscarHistorialPrecios()" style="width:auto; margin:0;">Buscar</button>
+        </div>
+        <div id="hp-resultado" style="margin-top:10px;"></div>
+      </div>
+    </section>
+
     <!-- ===================== VISTA: SEGUIMIENTO ===================== -->
     <section id="view-seguimiento" class="view hidden">
       <div class="card">
@@ -421,7 +437,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -1962,6 +1978,35 @@ async function decidirPrecio(btn, decision) {
   preciosPorConfirmar = preciosPorConfirmar.filter(p => p.codigo !== codigo);
   pintarPreciosPorConfirmar();
   toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
+}
+
+/* ---------------- Historial de precios (24-11-2026) ---------------- */
+async function buscarHistorialPrecios() {
+  const caja = document.getElementById('hp-resultado');
+  const termino = document.getElementById('hp-buscar').value.trim();
+  if (termino.length < 2) { toast('Escribe al menos 2 caracteres.'); return; }
+  caja.innerHTML = '<p style="color:#888;font-size:12px">Buscando…</p>';
+  const r = await callBackend('historialPrecios', { termino });
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!r.ok) { caja.innerHTML = '<p style="color:#c0392b">' + esc(r.error) + '</p>'; return; }
+  const color = { 'Cotización': '#2980b9', 'OC': '#b9770e', 'Factura': '#27ae60' };
+  const provs = r.proveedores.length ? `<h4 style="margin:6px 0">Proveedores</h4><div style="overflow-x:auto"><table style="font-size:12px">
+    <thead><tr><th>Proveedor</th><th>Compras</th><th>OC</th><th>Última OC</th><th>Cotizaciones (ganadas)</th><th>Frente a otros en los mismos artículos</th></tr></thead><tbody>
+    ${r.proveedores.map(p => `<tr><td><b>${esc(p.proveedor)}</b></td><td>${pesosCL(p.monto)}</td><td>${p.nOC}</td><td>${esc(p.ultimaOC) || '—'}</td>
+      <td>${p.cotizaciones} (${p.ganadas})</td>
+      <td>${p.comparables ? `<span style="color:${p.masCaro > p.masBarato ? '#c0392b' : '#27ae60'};font-weight:bold">más caro en ${p.masCaro} de ${p.comparables}</span>` : '—'}</td></tr>`).join('')}
+    </tbody></table></div>` : '';
+  const arts = r.articulos.length ? `<h4 style="margin:10px 0 6px">Artículos</h4>` + r.articulos.map(a => `
+    <details style="border-top:1px solid #eee;padding:6px 0;font-size:12px">
+      <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap">
+        <span><b>${esc(a.codigo)}</b> ${esc(a.descripcion)}</span>
+        <span>${a.mejor ? `mejor <b>${pesosCL(a.mejor.precio)}</b> (${esc(a.mejor.proveedor)})` : ''}${a.ultimaCompra ? ` · última compra ${pesosCL(a.ultimaCompra.precio)}` : ''}
+          ${a.brecha ? `<b style="color:#c0392b"> · ${a.brecha}% sobre el mejor</b>` : ''}${a.referencia ? ` · internet ${pesosCL(a.referencia.precio)}` : ''}</span></summary>
+      <div style="margin:6px 0 0 8px;line-height:1.6">
+        ${a.eventos.map(e => `<span style="color:${color[e.tipo]}">${e.tipo}</span> · ${esc(e.fecha)} · ${esc(e.proveedor)} · <b>${pesosCL(e.precio)}</b>${e.cantidad ? ' × ' + e.cantidad : ''} · ${esc(e.doc)}${e.ganador ? ' · ganó' : ''}${e.plazo ? ' · plazo ' + esc(e.plazo) : ''}`).join('<br>') || 'Sin compras ni cotizaciones.'}
+        ${a.referencia ? `<br><span style="color:#777">Internet: ${pesosCL(a.referencia.precio)} en ${esc(a.referencia.tienda)}${a.referencia.url ? ` · <a href="${esc(a.referencia.url)}" target="_blank">ver</a>` : ''}</span>` : ''}
+      </div></details>`).join('') : '<p style="color:#888;font-size:12px">Sin artículos que coincidan.</p>';
+  caja.innerHTML = provs + arts;
 }
 
 async function cambiarEstadoOC(nOC, estadoNuevo) {
