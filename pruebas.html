@@ -1945,6 +1945,8 @@ function pintarPreciosPorConfirmar() {
       <span style="color:#b9770e">⚠️ ${esc(p.motivo)}</span>${p.nota ? `<br><span style="color:#777">${esc(p.nota)}</span>` : ''}
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">
         Precio por 1 ${esc(p.unidad || 'unidad')}: <input type="number" class="pc-precio" value="${p.precio}" style="width:100px;margin:0">
+        Peso por 1 ${esc(p.unidad || 'unidad')} (kg): <input type="number" step="any" class="pc-peso" value="${p.pesoKg || ''}" style="width:90px;margin:0">
+        ${p.pesoPresentacionKg ? `<span style="color:#777">(envase ${p.pesoPresentacionKg} kg${Number(p.unidadesPorPresentacion) > 1 ? ' ÷ ' + p.unidadesPorPresentacion : ''})</span>` : ''}
         <button class="primary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPrecio(this,'CONFIRMAR')">Confirmar</button>
         <button class="secondary" style="width:auto;margin:0;padding:4px 10px" onclick="decidirPrecio(this,'DESCARTAR')">Descartar</button>
       </div></div>`).join('') + (preciosPorConfirmar.length > pcMostrados ? `<button class="secondary" style="width:auto" onclick="pcMostrados+=20;pintarPreciosPorConfirmar()">Ver 20 más</button>` : '')
@@ -1954,7 +1956,8 @@ async function decidirPrecio(btn, decision) {
   const caja = btn.closest('.pc-item');
   const codigo = caja.dataset.codigo;
   btn.disabled = true;
-  const res = await callBackend('confirmarPrecioReferencia', { codigo, decision, precio: caja.querySelector('.pc-precio').value, usuario: currentUser });
+  const res = await callBackend('confirmarPrecioReferencia', { codigo, decision, precio: caja.querySelector('.pc-precio').value,
+    pesoKg: caja.querySelector('.pc-peso').value, usuario: currentUser });
   if (!res.ok) { toast('No se guardó: ' + res.error); btn.disabled = false; return; }
   preciosPorConfirmar = preciosPorConfirmar.filter(p => p.codigo !== codigo);
   pintarPreciosPorConfirmar();
