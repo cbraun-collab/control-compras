@@ -115,6 +115,8 @@
     <button class="tab" data-view="trazabilidad" data-modulo="Gestión">Trazabilidad</button>
     <button class="tab" data-view="precios" data-modulo="Gestión">Historial de precios</button>
     <button class="tab" data-view="analisis" data-modulo="Gestión">Análisis de compras</button>
+    <div class="grupo"><span class="ic">⚙️</span>Configuración</div>
+    <button class="tab" data-view="usuarios" data-modulo="Configuración">Usuarios y permisos</button>
   </nav>
 
   <main>
@@ -413,6 +415,26 @@
       <div class="card"><h3>Materiales comprados</h3><div id="anPorMat"></div></div>
     </section>
 
+    <section id="view-usuarios" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Personas que usan el sistema y qué pueden hacer. Solo Carlos Braun agrega o modifica.
+          <b>Puede emitir OC</b>: Compras siempre; un ingeniero solo si se le autoriza (y siempre desde el comparativo del sistema).</p>
+        <div id="usrForm" style="display:none;border:1px solid #E5E7EB;border-radius:8px;padding:10px;margin-bottom:10px">
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+            <div style="flex:2;min-width:180px"><label>Correo @senercom.cl</label><input id="usrCorreo" placeholder="nombre@senercom.cl"></div>
+            <div style="flex:2;min-width:160px"><label>Nombre</label><input id="usrNombre"></div>
+            <div style="flex:1;min-width:140px"><label>Rol</label><select id="usrRol"></select></div>
+            <div style="flex:1;min-width:120px"><label>Puede emitir OC</label><select id="usrOC"><option>NO</option><option>SI</option></select></div>
+            <div style="flex:1;min-width:100px"><label>Activo</label><select id="usrActivo"><option>SI</option><option>NO</option></select></div>
+            <div style="flex:2;min-width:140px"><label>Área</label><input id="usrArea" placeholder="Ingeniería, Bodega, Logística…"></div>
+          </div>
+          <button class="primary" style="width:auto" onclick="guardarUsuarioUI(this)">Guardar usuario</button>
+          <span style="font-size:11px;color:#6B7280;margin-left:8px">Para modificar a alguien, escribe su mismo correo.</span>
+        </div>
+        <div id="usrLista"></div>
+      </div>
+    </section>
+
     <section id="view-seguimiento" class="view hidden">
       <div class="card">
         <h3>Requisiciones</h3>
@@ -540,7 +562,7 @@ function toast(msg) {
 const ACCIONES_LECTURA = new Set(['buscarArticulo', 'buscarProveedor', 'obtenerRequisicion',
   'obtenerRequisicionParaRevision', 'listarRequisicionesAbiertas', 'obtenerGanadoresComparativo',
   'listarRequisiciones', 'listarOC', 'listarStockCritico', 'listarPresupuestoCC',
-  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios', 'listarPesosPorConfirmar', 'listarColaCotizacion', 'analisisCompras']);
+  'obtenerDocumentosAsociados', 'listarReservas', 'listarOCParaRecepcion', 'listarRecepciones', 'listarFacturas', 'listarPagos', 'trazabilidad', 'listarParaEntrega', 'listarPrestamos', 'valorBodega', 'listarPreciosPorConfirmar', 'historialPrecios', 'listarPesosPorConfirmar', 'listarColaCotizacion', 'analisisCompras', 'listarUsuarios']);
 
 // Todo lo que ESCRIBE o envía archivos va por POST: la dirección de una llamada JSONP tiene
 // un largo máximo. Un PDF en base64 no cabía ("Error de red llamando a subirCotizacion") y un
@@ -2089,6 +2111,37 @@ async function decidirPrecio(btn, decision) {
   pintarPreciosPorConfirmar();
   toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
 }
+
+/* ---------------- Usuarios y permisos (25-11-2026) ---------------- */
+async function cargarUsuariosUI() {
+  const res = await callBackend('listarUsuarios', { usuario: currentUser });
+  if (!res.ok) { toast(res.error); return; }
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  document.getElementById('usrForm').style.display = res.esAdmin ? 'block' : 'none';
+  const sel = document.getElementById('usrRol'); if (!sel.options.length) sel.innerHTML = res.roles.map(r => '<option>' + r + '</option>').join('');
+  const pill = (t, ok) => '<span class="badge" style="background:' + (ok ? '#DCFCE7;color:#15803D' : '#E5E7EB;color:#4B5563') + '">' + t + '</span>';
+  document.getElementById('usrLista').innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th>Área</th><th>Puede emitir OC</th><th>Activo</th>' + (res.esAdmin ? '<th></th>' : '') + '</tr></thead><tbody>' +
+    res.usuarios.map(u => '<tr><td>' + esc(u.nombre) + '</td><td>' + esc(u.correo) + '</td><td>' + esc(u.rol) + '</td><td>' + esc(u.area) + '</td><td>' + pill(u.puedeOC || 'NO', u.puedeOC === 'SI') +
+      '</td><td>' + pill(u.activo || 'SI', u.activo !== 'NO') + '</td>' + (res.esAdmin ? '<td><button class="secondary" style="width:auto;margin:0" onclick=\'editarUsuarioUI(' + JSON.stringify(u).replace(/'/g, '&#39;') + ')\'>Editar</button></td>' : '') + '</tr>').join('') + '</tbody></table></div>';
+}
+function editarUsuarioUI(u) {
+  document.getElementById('usrCorreo').value = u.correo; document.getElementById('usrNombre').value = u.nombre;
+  document.getElementById('usrRol').value = u.rol; document.getElementById('usrOC').value = u.puedeOC || 'NO';
+  document.getElementById('usrActivo').value = u.activo || 'SI'; document.getElementById('usrArea').value = u.area || '';
+  window.scrollTo(0, 0);
+}
+async function guardarUsuarioUI(btn) {
+  btn.disabled = true;
+  try {
+    const p = { usuario: currentUser, correo: document.getElementById('usrCorreo').value, nombre: document.getElementById('usrNombre').value,
+      rol: document.getElementById('usrRol').value, puedeOC: document.getElementById('usrOC').value, activo: document.getElementById('usrActivo').value,
+      area: document.getElementById('usrArea').value };
+    const res = await callBackend('guardarUsuario', p);
+    if (!res.ok) { toast(res.error); return; }
+    toast('Usuario ' + res.accion + '.'); ['usrCorreo', 'usrNombre', 'usrArea'].forEach(id => document.getElementById(id).value = ''); cargarUsuariosUI();
+  } finally { btn.disabled = false; }
+}
+document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => { if (btn.dataset.view === 'usuarios') cargarUsuariosUI(); }));
 
 /* ---------------- Análisis de compras (25-11-2026) ---------------- */
 let AN = { lineas: [], entregas: [] }, anChartPrecio = null, anChartMes = null;
