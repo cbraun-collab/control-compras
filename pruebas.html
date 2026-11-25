@@ -406,6 +406,9 @@
       </div>
       <div class="card"><h3>Compras por mes</h3><div style="position:relative;height:220px"><canvas id="anGrafMes"></canvas></div></div>
       <div class="card"><h3>Por obra (centro de costo)</h3><div id="anPorObra"></div></div>
+      <div class="card"><h3>Consumo por obra (salidas de bodega)</h3>
+        <p style="font-size:12px;color:#6B7280;margin:0 0 6px">Consumos internos de bodega a cada obra. «Valor real» = cantidad × precio unitario de la OC del mismo código; «Valor Defontana» viene con errores de unidad (ej. caja valorizada como unidad). Las líneas «a revisar» difieren más de 3 veces.</p>
+        <div id="anConsumo"></div></div>
       <div class="card"><h3>Por proveedor</h3><div id="anPorProv"></div></div>
       <div class="card"><h3>Materiales comprados</h3><div id="anPorMat"></div></div>
     </section>
@@ -2151,6 +2154,16 @@ function pintarAnalisis() {
       return [anEsc(x.k), anEsc(x.l.descripcion), x.cant.toLocaleString('es-CL'), anEsc(x.l.unidad), anCLP(x.cant ? x.neto / x.cant : 0),
         anCLP(pr.length ? Math.min(...pr) : 0), anCLP(pr.length ? Math.max(...pr) : 0), anCLP(x.neto)];
     }));
+  // Consumo por obra (salidas de bodega), con los mismos filtros de fecha/obra/material
+  const d = document.getElementById('anDesde').value, hh = document.getElementById('anHasta').value, ob = document.getElementById('anObra').value;
+  const tx = document.getElementById('anTexto').value.trim().toLowerCase();
+  const cs = (AN.entregas || []).filter(c => (!d || c.fecha >= d) && (!hh || c.fecha <= hh) && (!ob || anObraDe(c) === ob) &&
+    (!tx || (c.codigo + ' ' + c.descripcion).toLowerCase().includes(tx)));
+  const gc = {}; cs.forEach(c => { const k = c.centro || c.obra; const x = gc[k] = gc[k] || { k, obra: c.obra, real: 0, df: 0, n: 0, rev: 0 };
+    x.real += c.valor || 0; x.df += c.valorDefontana || 0; x.n++; if (c.revisar) x.rev++; });
+  document.getElementById('anConsumo').innerHTML = anTabla(['Centro', 'Obra', 'Líneas', 'Valor real (precio OC)', 'Valor Defontana', 'Líneas a revisar'],
+    Object.values(gc).sort((a, b) => b.real - a.real).map(x => [anEsc(x.k), anEsc(x.obra), x.n, anCLP(x.real), anCLP(x.df),
+      x.rev ? '<span style="color:#B45309;font-weight:600">' + x.rev + '</span>' : '0']));
   const sel = document.getElementById('anMaterial'), prev = sel.value;
   const mats = anAgrupar(ls, l => l.codigo).sort((a, b) => b.n - a.n);
   sel.innerHTML = mats.map(x => '<option value="' + anEsc(x.k) + '">' + anEsc(x.k + ' · ' + x.l.descripcion) + ' (' + x.n + ' compra' + (x.n > 1 ? 's' : '') + ')</option>').join('');
