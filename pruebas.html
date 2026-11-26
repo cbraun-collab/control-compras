@@ -123,6 +123,7 @@
       <div class="grupo"><span class="ic">💰</span>Administración 🔒</div>
       <button class="tab" data-view="admflujo" data-modulo="Administración">Flujo de caja</button>
       <button class="tab" data-view="admpagos" data-modulo="Administración">Pagos por definir</button>
+      <button class="tab" data-view="admresumen" data-modulo="Administración">Resumen de pagos</button>
       <button class="tab" data-view="admrend" data-modulo="Administración">Rendimiento ingenieros</button>
       <button class="tab" data-view="admcreditos" data-modulo="Administración">Créditos y tarjetas</button>
       <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="oc">Reporte de OC</button>
@@ -494,6 +495,32 @@
       <div class="card"><b>Cada ingeniero: mismo período, año contra año</b><div id="rendTabla"></div></div>
       <div class="card"><b>Monto adjudicado por ingeniero y mes</b><div id="rendCalor"></div></div>
       <div class="card"><b>Costo del ingeniero vs. utilidad que generó</b><div id="rendAnual"></div></div>
+    </section>
+
+    <section id="view-admresumen" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Consolida lo que hay que pagar en el período, por medio de pago y tipo de gasto (como el resumen que Claudia envía hoy). Incluye facturas y OC con medio de pago definido, cuotas de créditos y los pagos adicionales que agregues abajo.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="width:130px"><label>Desde</label><input id="rpDesde" placeholder="dd-mm-aaaa"></div>
+          <div style="width:130px"><label>Hasta</label><input id="rpHasta" placeholder="dd-mm-aaaa"></div>
+          <button class="primary" style="width:auto" onclick="consolidarPagos(this)">Consolidar resumen</button>
+          <button class="secondary" style="width:auto" onclick="descargarResumenExcel()">Descargar Excel</button>
+          <button class="secondary" style="width:auto" onclick="imprimirResumen()">Imprimir / PDF</button>
+        </div>
+        <details style="margin-top:10px"><summary style="cursor:pointer;color:#CF4520;font-weight:600">+ Agregar otro pago (honorarios, seguros, cuota social, traspasos…)</summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
+            <div style="width:120px"><label>Fecha de pago</label><input id="rpFecha" placeholder="dd-mm-aaaa"></div>
+            <div style="flex:2;min-width:180px"><label>Concepto</label><input id="rpConcepto" placeholder="Honorarios diciembre"></div>
+            <div style="flex:1;min-width:150px"><label>Proveedor / a quién</label><input id="rpProveedor"></div>
+            <div style="width:120px"><label>Monto $</label><input id="rpMonto" type="number"></div>
+            <div style="flex:1;min-width:160px"><label>Medio de pago</label><select id="rpMedio"></select></div>
+            <div style="width:150px"><label>Tipo de gasto</label><select id="rpCat"></select></div>
+            <div style="flex:1;min-width:140px"><label>Nota</label><input id="rpNota" placeholder="ej. póliza 61957026"></div>
+            <button class="primary" style="width:auto" onclick="agregarPagoExtraUI(this)">Agregar</button>
+          </div>
+        </details>
+      </div>
+      <div id="rpSalida"></div>
     </section>
 
     <section id="view-admaccesos" class="view hidden">
@@ -2424,6 +2451,85 @@ document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click
   if (v === 'admaccesos') cargarAccesosUI();
   document.querySelector('header h1').innerHTML = btn.dataset.modulo === 'Administración' ? 'SENER<b>COM</b> · Administración' : 'SENER<b>COM</b> · Compras';
 }));
+
+/* ---------------- Resumen de pagos a realizar (26-11-2026) ----------------
+   Igual al resumen que hoy arma Claudia: tabla medio de pago × tipo de gasto y detalle por medio. */
+let resPagos = null;
+function hoyDMA(d) { return ('0' + d.getDate()).slice(-2) + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + d.getFullYear(); }
+function iniciarResumenPagos() {
+  const h = new Date(), fin = new Date(h.getFullYear(), h.getMonth() + 1, 0);
+  if (!document.getElementById('rpDesde').value) { document.getElementById('rpDesde').value = hoyDMA(h); document.getElementById('rpHasta').value = hoyDMA(fin); }
+  consolidarPagos();
+}
+async function consolidarPagos(btn) {
+  if (btn) btn.disabled = true;
+  document.getElementById('rpSalida').innerHTML = '<div class="card">Consolidando…</div>';
+  try {
+    const r = await callAdmin('resumenPagos', { desde: document.getElementById('rpDesde').value, hasta: document.getElementById('rpHasta').value });
+    if (!r.ok) { document.getElementById('rpSalida').innerHTML = '<div class="card" style="color:#B91C1C">' + escA(r.error) + '</div>'; return; }
+    resPagos = r;
+    const selM = document.getElementById('rpMedio'), selC = document.getElementById('rpCat');
+    if (!selM.options.length) { selM.innerHTML = r.medios.map(m => '<option>' + m + '</option>').join(''); selC.innerHTML = r.categorias.map(c => '<option>' + c + '</option>').join(''); }
+    dibujarResumenPagos();
+  } finally { if (btn) btn.disabled = false; }
+}
+function dibujarResumenPagos() {
+  const r = resPagos, it = r.items;
+  const cats = r.categorias.filter(c => it.some(x => x.categoria === c));
+  const medios = [...new Set(it.map(x => x.medio))].sort((a, b) => sumaM(b) - sumaM(a));
+  function sumaM(m, c) { return it.filter(x => x.medio === m && (!c || x.categoria === c)).reduce((s, x) => s + x.monto, 0); }
+  const total = it.reduce((s, x) => s + x.monto, 0);
+  const tdR = v => '<td style="text-align:right">' + (v ? fmt$(v) : '') + '</td>';
+  let html = '<div class="card" id="rpImprimir"><h3 style="margin:0">Resumen de pagos · ' + r.desde + ' al ' + r.hasta + '</h3>' +
+    '<p style="font-size:12px;color:#6B7280;margin:2px 0 10px">Generado ' + new Date().toLocaleString('es-CL') + ' por ' + escA(currentUser) + '</p>' +
+    '<table><thead><tr><th>Suma de monto</th>' + cats.map(c => '<th style="text-align:right">' + c + '</th>').join('') + '<th style="text-align:right">Total general</th></tr></thead><tbody>' +
+    medios.map(m => '<tr><td><b>' + escA(r.siglas[m] || m) + '</b> <span style="color:#6B7280">' + escA(m) + '</span></td>' + cats.map(c => tdR(sumaM(m, c))).join('') + '<td style="text-align:right;font-weight:700">' + fmt$(sumaM(m)) + '</td></tr>').join('') +
+    '<tr style="font-weight:700;background:#FDE3D8"><td>Total general</td>' + cats.map(c => tdR(it.filter(x => x.categoria === c).reduce((s, x) => s + x.monto, 0))).join('') + '<td style="text-align:right">' + fmt$(total) + '</td></tr></tbody></table>';
+  // "Resumen incluye": créditos y pagos adicionales
+  const incl = it.filter(x => x.origen === 'CRÉDITO' || x.origen === 'ADICIONAL');
+  if (incl.length) html += '<p style="margin:12px 0 4px;font-weight:700;color:#003B49;text-decoration:underline">Resumen incluye:</p><ul style="margin:0;font-size:12px">' + incl.map(x => '<li>' + escA(x.proveedor) + (x.nota ? ' (' + escA(x.nota) + ')' : '') + ' ' + fmt$(x.monto) + ' · ' + escA(x.sigla) + ' · ' + x.fecha + '</li>').join('') + '</ul>';
+  // detalle por medio
+  html += '<h3 style="margin:16px 0 6px">Detalle de pagos</h3>';
+  medios.forEach((m, n) => {
+    const filas = it.filter(x => x.medio === m).sort((a, b) => String(a.proveedor).localeCompare(String(b.proveedor)));
+    html += '<p style="margin:12px 0 4px;font-weight:700;color:#003B49;text-decoration:underline">' + (n + 1) + '. ' + escA(m.toUpperCase()) + ' ' + fmt$(sumaM(m)) + '</p>' +
+      '<table><thead><tr><th>Proveedor / concepto</th><th style="text-align:right">Monto</th><th>Documento</th><th>Fecha</th><th>Medio</th><th>CC</th><th></th></tr></thead><tbody>' +
+      filas.map(x => '<tr><td>' + escA(x.proveedor) + '</td>' + tdR(x.monto) + '<td>' + escA(x.origen + ' ' + x.documento) + '</td><td>' + (x.sinFecha ? '<span class="badge" style="background:#FEF3C7;color:#B45309">sin fecha</span>' : x.fecha) + '</td><td>' + escA(x.sigla) + '</td><td>' + escA(x.categoria) + '</td><td>' + (x.origen === 'ADICIONAL' ? '<button class="secondary" style="width:auto;margin:0" onclick="anularPagoExtraUI(\'' + escA(x.id) + '\')">Quitar</button>' : '') + '</td></tr>').join('') +
+      '<tr style="font-weight:700"><td>Total</td>' + tdR(sumaM(m)) + '<td colspan="5"></td></tr></tbody></table>';
+  });
+  if (!it.length) html += '<p style="font-size:12px;color:#6B7280">No hay pagos con medio definido en este período.</p>';
+  html += '</div>';
+  if (r.sinMedio.length) html += '<div class="card" style="border-left:4px solid #B91C1C"><b style="color:#B91C1C">Sin medio de pago definido (' + r.sinMedio.length + ' · ' + fmt$(r.sinMedio.reduce((s, x) => s + x.monto, 0)) + ')</b><p style="font-size:12px;color:#6B7280;margin:4px 0">No entran al resumen hasta definir su medio en «Pagos por definir».</p><table><thead><tr><th>Doc.</th><th>Proveedor</th><th style="text-align:right">Monto</th><th>Sugerido</th><th>CC</th></tr></thead><tbody>' +
+    r.sinMedio.map(x => '<tr><td>' + escA(x.origen + ' ' + x.documento) + '</td><td>' + escA(x.proveedor) + '</td>' + tdR(x.monto) + '<td>' + escA(x.sugerido || '—') + '</td><td>' + escA(x.categoria) + '</td></tr>').join('') + '</tbody></table></div>';
+  document.getElementById('rpSalida').innerHTML = html;
+}
+async function agregarPagoExtraUI(btn) {
+  btn.disabled = true;
+  try {
+    const g = id => document.getElementById(id).value;
+    const r = await callAdmin('guardarPagoExtra', { fechaPago: g('rpFecha'), concepto: g('rpConcepto'), proveedor: g('rpProveedor'), monto: g('rpMonto'), medio: g('rpMedio'), categoria: g('rpCat'), nota: g('rpNota') });
+    if (!r.ok) { toast(r.error); return; }
+    ['rpConcepto', 'rpProveedor', 'rpMonto', 'rpNota'].forEach(id => document.getElementById(id).value = '');
+    toast('Pago agregado.'); consolidarPagos();
+  } finally { btn.disabled = false; }
+}
+async function anularPagoExtraUI(id) {
+  if (!confirm('¿Quitar este pago adicional del resumen?')) return;
+  const r = await callAdmin('anularPagoExtra', { id }); if (!r.ok) { toast(r.error); return; } consolidarPagos();
+}
+function descargarResumenExcel() {
+  const el = document.getElementById('rpImprimir'); if (!el) return;
+  const html = '<html><head><meta charset="utf-8"></head><body>' + el.innerHTML.replace(/<button[^>]*>.*?<\/button>/g, '') + '</body></html>';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'application/vnd.ms-excel' }));
+  a.download = 'Resumen_pagos_' + resPagos.desde + '_a_' + resPagos.hasta + '.xls'; a.click();
+}
+function imprimirResumen() {
+  const el = document.getElementById('rpImprimir'); if (!el) return;
+  const w = window.open('', '_blank'); if (!w) { toast('Permite ventanas emergentes para imprimir.'); return; }
+  w.document.write('<html><head><meta charset="utf-8"><title>Resumen de pagos</title><style>body{font-family:Segoe UI,Arial;font-size:12px;color:#1F2937}table{border-collapse:collapse;width:100%;margin-bottom:8px}th{background:#FBC3AE;color:#003B49;text-align:left;padding:5px}td{padding:5px;border-bottom:1px solid #eee}h3{color:#003B49}button{display:none}</style></head><body><img src="' + location.href.replace(/[^/]*$/, '') + 'logo.png" style="height:40px"><br>' + el.innerHTML + '</body></html>');
+  w.document.close(); setTimeout(() => w.print(), 500);
+}
+document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => { if (btn.dataset.view === 'admresumen') iniciarResumenPagos(); }));
 
 /* ---------------- Usuarios y permisos (25-11-2026) ---------------- */
 async function cargarUsuariosUI() {
