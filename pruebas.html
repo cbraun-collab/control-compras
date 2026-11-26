@@ -75,6 +75,8 @@
     nav.abierto { transform:none; }
     main { padding:14px; }
   }
+  #admEsc .on{background:#CF4520;color:#fff;border-color:#CF4520}
+  #view-admflujo canvas,#view-admrend canvas{max-height:280px}
 </style>
 </head>
 <body>
@@ -117,6 +119,18 @@
     <button class="tab" data-view="analisis" data-modulo="Gestión">Análisis de compras</button>
     <div class="grupo"><span class="ic">⚙️</span>Configuración</div>
     <button class="tab" data-view="usuarios" data-modulo="Configuración">Usuarios y permisos</button>
+    <div id="navAdmin" style="display:none">
+      <div class="grupo"><span class="ic">💰</span>Administración 🔒</div>
+      <button class="tab" data-view="admflujo" data-modulo="Administración">Flujo de caja</button>
+      <button class="tab" data-view="admpagos" data-modulo="Administración">Pagos por definir</button>
+      <button class="tab" data-view="admrend" data-modulo="Administración">Rendimiento ingenieros</button>
+      <button class="tab" data-view="admcreditos" data-modulo="Administración">Créditos y tarjetas</button>
+      <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="oc">Reporte de OC</button>
+      <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="conc">Conciliación bancaria</button>
+      <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="pre">Pre-balance</button>
+      <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="cierre">Cierre mensual</button>
+      <button class="tab" data-view="admaccesos" data-modulo="Administración">Accesos</button>
+    </div>
   </nav>
 
   <main>
@@ -415,6 +429,85 @@
       <div class="card"><h3>Materiales comprados</h3><div id="anPorMat"></div></div>
     </section>
 
+    <section id="view-admflujo" class="view hidden">
+      <div class="card" style="background:#FFF7ED;border:1px solid #FED7AA;font-size:12px;color:#9A3412">🔒 Solo Claudia Menéndez y Carlos Braun. El servidor verifica tu sesión de Google en cada consulta.
+        <span id="admCorte"></span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0" id="admEsc">
+        <span style="align-self:center;font-size:12px;color:#6B7280">Escenario:</span>
+        <button class="secondary on" style="width:auto;margin:0" data-esc="base">Base</button>
+        <button class="secondary" style="width:auto;margin:0" data-esc="pes">Pesimista</button>
+        <button class="secondary" style="width:auto;margin:0" data-esc="sin">Sin cobros nuevos</button>
+      </div>
+      <div id="admKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px">
+        <div class="card"><b>Cobros vs. pagos y saldo en bancos</b><canvas id="admC1"></canvas></div>
+        <div class="card"><b>Proyección de saldo · 16 semanas</b><canvas id="admC2"></canvas>
+          <p style="font-size:11px;color:#6B7280;margin:4px 0 0">Egreso semanal = promedio de los últimos 6 meses reales del flujo. Ingresos = facturas por cobrar a su fecha y, desde la semana 7, el cobro promedio (pesimista: cobros 30 días tarde y 70% desde la semana 11).</p></div>
+        <div class="card"><b>Egresos por línea del flujo</b><canvas id="admC3"></canvas></div>
+        <div class="card"><b>Egresos por medio de pago</b><canvas id="admC4"></canvas></div>
+        <div class="card"><b>Saldo por banco</b><canvas id="admC5"></canvas></div>
+        <div class="card"><b>Compromisos próximos</b><div id="admComp" style="max-height:300px;overflow:auto"></div></div>
+      </div>
+      <div class="card"><b>Por cobrar a clientes</b><div id="admCobrar"></div></div>
+    </section>
+
+    <section id="view-admpagos" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">OC abiertas y facturas por pagar. La <b>condición de la cotización</b> la lee la IA; el sistema <b>sugiere</b> el medio de pago y tú lo confirmas o cambias. Con esto cada compra entra al flujo de caja en su fecha y con su medio.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><select id="admPagosFiltro" style="width:auto"><option value="falta">Solo sin definir</option><option value="todos">Todos</option></select></div>
+        <div id="admPagosLista"></div>
+      </div>
+    </section>
+
+    <section id="view-admcreditos" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Créditos, cuotas y tarjetas que se pagan cada mes. Alimentan los compromisos del flujo de caja.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;border:1px solid #E5E7EB;border-radius:8px;padding:10px;margin-bottom:10px">
+          <div style="flex:2;min-width:180px"><label>Nombre</label><input id="crNombre" placeholder="BCI hipotecario"></div>
+          <div style="flex:1;min-width:110px"><label>Banco</label><input id="crBanco"></div>
+          <div style="flex:1;min-width:150px"><label>Medio de pago</label><select id="crMedio"></select></div>
+          <div style="flex:1;min-width:110px"><label>Cuota $</label><input id="crCuota" type="number"></div>
+          <div style="flex:1;min-width:80px"><label>Día de pago</label><input id="crDia" type="number" min="1" max="31"></div>
+          <div style="flex:1;min-width:90px"><label>N.º cuotas</label><input id="crTotal"></div>
+          <div style="flex:1;min-width:110px"><label>Última cuota</label><input id="crUltima" placeholder="dd-mm-aaaa"></div>
+          <div style="flex:1;min-width:80px"><label>Activo</label><select id="crActivo"><option>SI</option><option>NO</option></select></div>
+          <button class="primary" style="width:auto" onclick="guardarCreditoUI(this)">Guardar</button>
+        </div>
+        <div id="crLista"></div>
+      </div>
+    </section>
+
+    <section id="view-admrend" class="view hidden">
+      <div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div style="min-width:170px"><label>Ingeniero</label><select id="rendIng"></select></div>
+        <div style="min-width:120px"><label>Mes</label><select id="rendMes"><option value="0">Año completo</option><option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option><option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option><option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option><option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option></select></div>
+        <div style="min-width:90px"><label>Comparar año</label><select id="rendAnoB"></select></div>
+        <div style="min-width:90px"><label>contra</label><select id="rendAnoA"></select></div>
+        <div style="flex:1;font-size:12px;color:#6B7280">Fuente: «Centros de Costos» del flujo (solo lectura). Mismos criterios que la hoja «analisis detallado». Mes = mes de envío del presupuesto.</div>
+      </div>
+      <h3 id="rendTitulo" style="color:#003B49;margin:6px 0 10px"></h3>
+      <div id="rendKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px">
+        <div class="card"><b>Adjudicado por mes (año contra año) y cotizado</b><canvas id="rendC1"></canvas></div>
+        <div class="card"><b>Efectividad de cierre por mes</b><canvas id="rendC2"></canvas></div>
+      </div>
+      <div class="card"><b>Cada ingeniero: mismo período, año contra año</b><div id="rendTabla"></div></div>
+      <div class="card"><b>Monto adjudicado por ingeniero y mes</b><div id="rendCalor"></div></div>
+      <div class="card"><b>Costo del ingeniero vs. utilidad que generó</b><div id="rendAnual"></div></div>
+    </section>
+
+    <section id="view-admaccesos" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Personas que pueden entrar a Administración (flujo de caja, pagos, balances, rendimiento). Solo Carlos Braun agrega o quita. Correos @senercom.cl.</p>
+        <div id="accForm" style="display:none;gap:8px;align-items:flex-end;margin-bottom:8px"><div style="flex:1;max-width:320px"><label>Agregar correo</label><input id="accNuevo" placeholder="nombre@senercom.cl"></div><button class="primary" style="width:auto" onclick="agregarAccesoUI()">Autorizar</button></div>
+        <div id="accLista"></div>
+      </div>
+    </section>
+
+    <section id="view-admpend" class="view hidden">
+      <div class="card"><div id="admPendTxt"></div></div>
+    </section>
+
     <section id="view-usuarios" class="view hidden">
       <div class="card">
         <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Personas que usan el sistema y qué pueden hacer. Solo Carlos Braun agrega o modifica.
@@ -634,6 +727,7 @@ function iniciarSesion() {
     scope: 'email profile',
     callback: (resp) => {
       if (resp.error) { toast('Error de inicio de sesión'); return; }
+      window.tokenGoogle = resp.access_token;
       obtenerPerfil(resp.access_token);
     }
   });
@@ -656,6 +750,7 @@ function obtenerPerfil(accessToken) {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('appScreen').classList.remove('hidden');
     cargarRequisiciones();
+    verificarAccesoAdmin();
   });
 }
 
@@ -2111,6 +2206,224 @@ async function decidirPrecio(btn, decision) {
   pintarPreciosPorConfirmar();
   toast(codigo + (decision === 'CONFIRMAR' ? ' confirmado.' : ' descartado.'));
 }
+
+/* ---------------- Administración (borrador 26-11-2026) ----------------
+   Solo Claudia y Carlos. La página solo muestra u oculta el menú; los DATOS los entrega el
+   servidor después de verificar el token de Google (no confía en el correo que manda la página). */
+const fmt$ = v => '$' + Math.round(Number(v) || 0).toLocaleString('es-CL');
+const fmtM = v => ((Number(v) || 0) / 1e6).toLocaleString('es-CL', { maximumFractionDigits: 1 }) + ' M';
+const escA = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+async function callAdmin(action, payload) {
+  const r = await callBackend(action, Object.assign({}, payload || {}, { token: window.tokenGoogle || '' }));
+  if (!r.ok && /venci|credencial/i.test(r.error || '')) toast('Tu sesión venció: cierra y vuelve a entrar.');
+  return r;
+}
+async function verificarAccesoAdmin() {
+  try { const r = await callAdmin('accesoAdministracion', {}); if (r.ok && r.acceso) document.getElementById('navAdmin').style.display = 'block'; } catch (e) {}
+}
+const admCharts = {}; let admDatos = null, admEsc = 'base';
+function admChart(id, cfg) { if (admCharts[id]) admCharts[id].destroy(); admCharts[id] = new Chart(document.getElementById(id), cfg); }
+const admCol = ['#003B49', '#CF4520', '#2A9D8F', '#E9C46A', '#8D99AE', '#F4A261', '#6D597A', '#457B9D', '#B5838D'];
+const ejeM = { y: { ticks: { callback: v => fmtM(v) } } };
+const mesCortoA = m => ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][Number(String(m).slice(5, 7)) - 1] || m;
+
+async function cargarFlujoCaja() {
+  document.getElementById('admKpis').innerHTML = '<div class="card">Cargando…</div>';
+  const r = await callAdmin('panelFlujoCaja', {});
+  if (!r.ok) { document.getElementById('admKpis').innerHTML = '<div class="card" style="color:#B91C1C">' + escA(r.error) + '</div>'; return; }
+  admDatos = r; dibujarFlujoCaja();
+}
+function dibujarFlujoCaja() {
+  const r = admDatos; if (!r) return;
+  document.getElementById('admCorte').textContent = ' · Saldos al cierre de ' + mesCortoA(r.corte) + ' ' + String(r.corte).slice(0, 4) + '.';
+  const aut = r.autonomia[admEsc];
+  const kp = [['Disponible (bancos)', fmt$(r.saldoHoy), r.serieBancos.map(b => b.banco + ' ' + fmtM(b.saldos[b.saldos.length - 1])).join(' · ')],
+    ['Por cobrar a clientes', fmt$(r.totalPorCobrar), r.porCobrar.length + ' facturas'],
+    ['Egreso promedio mensual', fmt$(r.egresoMensual), 'últimos 6 meses reales'],
+    ['Cobro promedio mensual', fmt$(r.cobroMensual), 'últimos 6 meses'],
+    ['Autonomía', aut + ' semanas', 'sin cobros nuevos: ' + r.autonomia.semanasSinCobros + ' semanas', Number(aut) < 6],
+    ['Pagado con TC Carlos Braun', fmt$(r.tcBraun), 'en el año (reembolsable)']];
+  document.getElementById('admKpis').innerHTML = kp.map(k => '<div class="card" style="margin:0;border-left:4px solid ' + (k[3] ? '#B91C1C' : '#003B49') + '"><div style="font-size:11px;color:#6B7280">' + k[0] + '</div><div style="font-size:19px;font-weight:700">' + k[1] + '</div><div style="font-size:11px;color:#6B7280">' + escA(k[2]) + '</div></div>').join('');
+  const mv = r.movimientos;
+  const totSaldo = r.meses.map((m, i) => r.serieBancos.reduce((a, b) => a + b.saldos[i], 0));
+  admChart('admC1', { data: { labels: mv.map(m => mesCortoA(m.mes)), datasets: [{ type: 'bar', label: 'Cobros', data: mv.map(m => m.cobros), backgroundColor: '#2A9D8F' }, { type: 'bar', label: 'Pagos', data: mv.map(m => m.pagos), backgroundColor: '#CF4520' }, { type: 'line', label: 'Saldo bancos', data: totSaldo, borderColor: '#003B49', borderWidth: 3, tension: .3 }] }, options: { scales: ejeM } });
+  const W = r.proyeccion.base.map((_, i) => 'S' + (i + 1));
+  admChart('admC2', { type: 'line', data: { labels: W, datasets: [{ label: 'Saldo proyectado', data: r.proyeccion[admEsc], borderColor: '#003B49', fill: { target: { value: 0 }, above: '#2A9D8F22', below: '#B91C1C33' }, tension: .3 }, { label: 'Cero', data: W.map(() => 0), borderColor: '#B91C1C', borderDash: [5, 5], pointRadius: 0 }] }, options: { scales: ejeM } });
+  const lf = r.flujo.meses.map((m, i) => mesCortoA(m) + (r.flujo.tipo[i] === 'Proyectado' ? '*' : ''));
+  admChart('admC3', { type: 'bar', data: { labels: lf, datasets: Object.entries(r.flujo.porGrupo).map(([k, v], i) => ({ label: k, data: v, backgroundColor: admCol[i % admCol.length] })) }, options: { scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => fmtM(v) } } } } });
+  admChart('admC4', { type: 'line', data: { labels: lf, datasets: Object.entries(r.flujo.porMedio).map(([k, v], i) => ({ label: k, data: v, borderColor: admCol[i % admCol.length], tension: .3 })) }, options: { scales: ejeM } });
+  admChart('admC5', { type: 'line', data: { labels: r.meses.map(mesCortoA), datasets: r.serieBancos.map((b, i) => ({ label: b.banco, data: b.saldos, borderColor: admCol[i], tension: .3 })) }, options: { scales: ejeM } });
+  const pill = e => '<span class="badge" style="background:' + ({ Programado: '#DCFCE7;color:#15803D', Estimado: '#FEF3C7;color:#B45309' }[e] || '#FEE2E2;color:#B91C1C') + '">' + e + '</span>';
+  document.getElementById('admComp').innerHTML = r.compromisos.length ? '<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Medio</th><th>Monto</th><th>Estado</th></tr></thead><tbody>' + r.compromisos.map(c => '<tr><td>' + c.fecha + '</td><td>' + escA(c.concepto) + '</td><td>' + escA(c.medio) + '</td><td style="text-align:right">' + fmt$(c.monto) + '</td><td>' + pill(c.estado) + '</td></tr>').join('') + '</tbody></table>' : '<p style="font-size:12px;color:#6B7280">Sin compromisos cargados.</p>';
+  document.getElementById('admCobrar').innerHTML = '<table><thead><tr><th>Factura</th><th>Cliente</th><th>Fecha estimada de cobro</th><th>Total</th></tr></thead><tbody>' + r.porCobrar.map(p => '<tr><td>' + escA(p.factura) + '</td><td>' + escA(p.cliente) + '</td><td>' + p.fecha + '</td><td style="text-align:right">' + fmt$(p.total) + '</td></tr>').join('') + '</tbody></table>';
+}
+document.querySelectorAll('#admEsc [data-esc]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#admEsc [data-esc]').forEach(x => x.classList.remove('on')); b.classList.add('on'); admEsc = b.dataset.esc; dibujarFlujoCaja(); }));
+
+let admPagos = null;
+async function cargarPagosPorDefinir() {
+  document.getElementById('admPagosLista').innerHTML = 'Cargando…';
+  const r = await callAdmin('listarPagosPorDefinir', {});
+  if (!r.ok) { document.getElementById('admPagosLista').innerHTML = '<span style="color:#B91C1C">' + escA(r.error) + '</span>'; return; }
+  admPagos = r; dibujarPagos();
+}
+function dibujarPagos() {
+  const r = admPagos; if (!r) return;
+  const solo = document.getElementById('admPagosFiltro').value === 'falta';
+  const docs = r.documentos.filter(d => !solo || !d.medio);
+  admPagos._vista = docs;
+  if (!docs.length) { document.getElementById('admPagosLista').innerHTML = '<p style="font-size:12px;color:#6B7280">No hay documentos pendientes de definir.</p>'; return; }
+  const opts = sel => '<option value="">— elegir —</option>' + r.medios.map(m => '<option' + (m === sel ? ' selected' : '') + '>' + m + '</option>').join('');
+  document.getElementById('admPagosLista').innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Doc.</th><th>Proveedor</th><th>Monto</th><th>Condición (cotización/factura)</th><th>Medio de pago</th><th>Condición / cuotas</th><th>Fecha de pago</th><th></th></tr></thead><tbody>' +
+    docs.map((d, i) => '<tr><td>' + d.tipo + ' ' + escA(d.folio || d.documento) + '<div style="font-size:10px;color:#6B7280">' + escA(d.obra || d.fechaDoc || '') + '</div></td><td>' + escA(d.proveedor) + '</td><td style="text-align:right">' + fmt$(d.monto) + '</td><td>' + escA(d.condicionCotizacion || '—') + (d.sugerido && !d.medio ? '<div style="font-size:10px;color:#CF4520">sugerido: ' + escA(d.sugerido) + '</div>' : '') + '</td>' +
+      '<td><select id="mp' + i + '" style="min-width:160px">' + opts(d.medio || d.sugerido) + '</select></td><td><input id="mc' + i + '" value="' + escA(d.condicion) + '" style="min-width:110px"><input id="mq' + i + '" value="' + escA(d.cuotas) + '" placeholder="n.º cuotas" style="width:80px;margin-top:2px"></td>' +
+      '<td><input id="mf' + i + '" value="' + escA(d.fechaPago || d.vencimiento || '') + '" placeholder="dd-mm-aaaa" style="width:105px"></td><td><button class="primary" style="width:auto;margin:0" onclick="guardarMedioUI(' + i + ',this)">Guardar</button>' + (d.definidoPor ? '<div style="font-size:10px;color:#15803D">✔ ' + escA(d.definidoPor) + '</div>' : '') + '</td></tr>').join('') + '</tbody></table></div>';
+}
+async function guardarMedioUI(i, btn) {
+  const d = admPagos._vista[i]; btn.disabled = true;
+  try {
+    const r = await callAdmin('definirMedioPago', { tipo: d.tipo, documento: d.documento, proveedor: d.proveedor, monto: d.monto,
+      medio: document.getElementById('mp' + i).value, condicion: document.getElementById('mc' + i).value, cuotas: document.getElementById('mq' + i).value, fechaPago: document.getElementById('mf' + i).value });
+    if (!r.ok) { toast(r.error); return; }
+    toast('Medio de pago ' + r.accion + '.'); cargarPagosPorDefinir();
+  } finally { btn.disabled = false; }
+}
+document.getElementById('admPagosFiltro').addEventListener('change', dibujarPagos);
+
+let admCreditos = [];
+async function cargarCreditosUI() {
+  const r = await callAdmin('listarCreditos', {});
+  if (!r.ok) { document.getElementById('crLista').innerHTML = '<span style="color:#B91C1C">' + escA(r.error) + '</span>'; return; }
+  const sel = document.getElementById('crMedio'); if (!sel.options.length) sel.innerHTML = r.medios.map(m => '<option>' + m + '</option>').join('');
+  admCreditos = r.creditos;
+  document.getElementById('crLista').innerHTML = '<table><thead><tr><th>Nombre</th><th>Banco</th><th>Medio</th><th>Cuota</th><th>Día</th><th>Cuotas</th><th>Última</th><th>Activo</th></tr></thead><tbody>' +
+    r.creditos.map((c, i) => '<tr style="cursor:pointer" onclick="editarCreditoUI(' + i + ')"><td>' + escA(c['Nombre']) + '</td><td>' + escA(c['Banco']) + '</td><td>' + escA(c['Medio Pago']) + '</td><td style="text-align:right">' + fmt$(c['Cuota']) + '</td><td>' + escA(c['Dia Pago']) + '</td><td>' + escA(c['Cuotas Total']) + '</td><td>' + escA(c['Ultima Cuota']) + '</td><td>' + escA(c['Activo']) + '</td></tr>').join('') + '</tbody></table><p style="font-size:11px;color:#6B7280">Haz clic en una fila para editarla.</p>';
+}
+function editarCreditoUI(i) {
+  const c = admCreditos[i]; const s = (id, v) => document.getElementById(id).value = v ?? '';
+  s('crNombre', c['Nombre']); s('crBanco', c['Banco']); s('crMedio', c['Medio Pago']); s('crCuota', c['Cuota']); s('crDia', c['Dia Pago']); s('crTotal', c['Cuotas Total']); s('crUltima', c['Ultima Cuota']); s('crActivo', c['Activo'] || 'SI');
+}
+async function guardarCreditoUI(btn) {
+  btn.disabled = true;
+  try {
+    const g = id => document.getElementById(id).value;
+    const r = await callAdmin('guardarCredito', { nombre: g('crNombre'), banco: g('crBanco'), medio: g('crMedio'), cuota: g('crCuota'), dia: g('crDia'), cuotasTotal: g('crTotal'), ultima: g('crUltima'), activo: g('crActivo') });
+    if (!r.ok) { toast(r.error); return; }
+    toast('Crédito ' + r.accion + '.'); cargarCreditosUI();
+  } finally { btn.disabled = false; }
+}
+const ADM_PEND = {
+  oc: ['Reporte de OC (semanal)', 'Facturas sin OC · OC sin factura después de 15 días · OC sin recepción · diferencias de monto factura vs. OC (más de 2% o $10.000) · OC abiertas hace más de 30 días.', 'Necesita: facturas del SII (export del RCV o de Defontana) en la carpeta ENTRADA.'],
+  conc: ['Conciliación bancaria (mensual)', 'Cruza la cartola de cada banco, los pagos y cobros del sistema y el libro mayor de Defontana (1110102002 Santander, 1110102004 BCI, 1110102005 Itaú) por monto, fecha ±3 días y RUT o glosa. Lista lo que está en el banco y no en Defontana, y al revés.', 'Necesita: cartolas de BCI e Itaú (la de Santander ya se sabe leer).'],
+  pre: ['Pre-balance', 'Lee el Balance General de Defontana, lo agrupa con MAPA_CUENTAS_BALANCE.xlsx en las notas del contador (3 a 19) y lo compara con el último balance oficial. El primero (enero a noviembre 2026) ya está en BALANCES SISTEMA/03.', 'Se conecta en la siguiente etapa.'],
+  cierre: ['Cierre mensual', 'Un botón que toma cartolas, balance y libro mayor del mes desde ENTRADA y deja en SALIDA: traspasos de bodega por obra, rendiciones, conciliación, pre-balance y lista de diferencias. Nada se sube solo a Defontana ni al banco.', 'Se construye después de que Claudia valide el manual.']
+};
+document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => {
+  const v = btn.dataset.view;
+  if (v === 'admflujo') cargarFlujoCaja();
+  if (v === 'admpagos') cargarPagosPorDefinir();
+  if (v === 'admcreditos') cargarCreditosUI();
+  if (v === 'admpend') { const p = ADM_PEND[btn.dataset.pend]; document.getElementById('admPendTxt').innerHTML = '<h3 style="margin:0 0 6px;color:#003B49">' + p[0] + ' <span class="badge" style="background:#FEF3C7;color:#B45309">en construcción</span></h3><p style="font-size:13px">' + p[1] + '</p><p style="font-size:12px;color:#6B7280">' + p[2] + '</p>'; }
+}));
+
+/* ---------------- Rendimiento de ingenieros (26-11-2026) ----------------
+   Fuente: «Centros de Costos» del flujo (solo lectura), mismos criterios que «analisis detallado».
+   Compara cualquier mes (o el año completo) contra el mismo período del año anterior. */
+const MESES_R = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+let rendDatos = null;
+async function cargarRendimiento() {
+  document.getElementById('rendKpis').innerHTML = '<div class="card">Cargando desde el archivo del flujo…</div>';
+  const r = await callAdmin('rendimientoIngenieros', {});
+  if (!r.ok) { document.getElementById('rendKpis').innerHTML = '<div class="card" style="color:#B91C1C">' + escA(r.error) + '</div>'; return; }
+  rendDatos = r;
+  const anos = [...new Set(r.filas.map(f => f.ano))].sort();
+  const ings = [...new Set(r.filas.map(f => f.ing))].filter(i => i !== 'Sin ingeniero').sort();
+  const selA = document.getElementById('rendAnoA'), selB = document.getElementById('rendAnoB'), selI = document.getElementById('rendIng');
+  selA.innerHTML = selB.innerHTML = anos.map(a => '<option>' + a + '</option>').join('');
+  selB.value = anos[anos.length - 1]; selA.value = anos[Math.max(0, anos.length - 2)];
+  selI.innerHTML = '<option value="">Empresa (todos)</option>' + ings.map(i => '<option>' + escA(i) + '</option>').join('');
+  const hoy = new Date(); document.getElementById('rendMes').value = String(hoy.getMonth() + 1);
+  dibujarRendimiento();
+}
+function rendSuma(ing, ano, mes) {
+  const s = { estudiados: 0, presupuestos: 0, cotizado: 0, adjN: 0, adjMonto: 0 };
+  rendDatos.filas.forEach(f => { if (f.ano != ano) return; if (ing && f.ing !== ing) return; if (mes && f.mes != mes) return;
+    Object.keys(s).forEach(k => s[k] += f[k]); });
+  s.efN = s.estudiados ? s.adjN / s.estudiados : 0; s.efM = s.cotizado ? s.adjMonto / s.cotizado : 0;
+  return s;
+}
+const pct = v => (v * 100).toLocaleString('es-CL', { maximumFractionDigits: 1 }) + '%';
+function delta(a, b, esPct) {
+  if (!a && !b) return '<span style="color:#9CA3AF">—</span>';
+  const d = esPct ? (b - a) * 100 : (a ? (b - a) / Math.abs(a) * 100 : null);
+  if (d === null) return '<span style="color:#15803D">nuevo</span>';
+  const c = d > 0 ? '#15803D' : d < 0 ? '#B91C1C' : '#6B7280';
+  return '<span style="color:' + c + ';font-weight:600">' + (d > 0 ? '▲ ' : d < 0 ? '▼ ' : '') + Math.abs(d).toLocaleString('es-CL', { maximumFractionDigits: 1 }) + (esPct ? ' pts' : '%') + '</span>';
+}
+function dibujarRendimiento() {
+  if (!rendDatos) return;
+  const A = +document.getElementById('rendAnoA').value, B = +document.getElementById('rendAnoB').value;
+  const mes = +document.getElementById('rendMes').value || 0, ing = document.getElementById('rendIng').value;
+  const per = (mes ? MESES_R[mes - 1] + ' ' : 'Año ');
+  document.getElementById('rendTitulo').textContent = (ing || 'Empresa') + ' · ' + per + B + ' vs. ' + per + A;
+  const a = rendSuma(ing, A, mes), b = rendSuma(ing, B, mes);
+  const kp = [['Proyectos estudiados', b.estudiados, a.estudiados, v => v], ['Monto cotizado', b.cotizado, a.cotizado, fmt$], ['Proyectos adjudicados', b.adjN, a.adjN, v => v],
+    ['Monto adjudicado', b.adjMonto, a.adjMonto, fmt$], ['Efectividad (n.º)', b.efN, a.efN, pct, 1], ['Efectividad ($)', b.efM, a.efM, pct, 1]];
+  document.getElementById('rendKpis').innerHTML = kp.map(k => '<div class="card" style="margin:0;border-left:4px solid #003B49"><div style="font-size:11px;color:#6B7280">' + k[0] + '</div><div style="font-size:19px;font-weight:700;color:#003B49">' + k[3](k[1]) + '</div><div style="font-size:11px;color:#6B7280">' + A + ': ' + k[3](k[2]) + ' · ' + delta(k[2], k[1], k[4]) + '</div></div>').join('');
+  // gráfico mensual año A vs año B
+  const serie = (ano, campo) => MESES_R.map((_, i) => rendSuma(ing, ano, i + 1)[campo]);
+  admChart('rendC1', { data: { labels: MESES_R, datasets: [
+    { type: 'bar', label: 'Adjudicado ' + A, data: serie(A, 'adjMonto'), backgroundColor: '#FBC3AE' },
+    { type: 'bar', label: 'Adjudicado ' + B, data: serie(B, 'adjMonto'), backgroundColor: '#CF4520' },
+    { type: 'line', label: 'Cotizado ' + B, data: serie(B, 'cotizado'), borderColor: '#003B49', tension: .3, yAxisID: 'y2' }] },
+    options: { scales: { y: { ticks: { callback: v => fmtM(v) }, title: { display: true, text: 'Adjudicado' } }, y2: { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => fmtM(v) }, title: { display: true, text: 'Cotizado' } } } } });
+  admChart('rendC2', { type: 'line', data: { labels: MESES_R, datasets: [
+    { label: 'Efectividad n.º ' + A, data: serie(A, 'efN').map(v => +(v * 100).toFixed(1)), borderColor: '#8D99AE', borderDash: [5, 4], tension: .3 },
+    { label: 'Efectividad n.º ' + B, data: serie(B, 'efN').map(v => +(v * 100).toFixed(1)), borderColor: '#003B49', tension: .3 },
+    { label: 'Efectividad $ ' + B, data: serie(B, 'efM').map(v => +(v * 100).toFixed(1)), borderColor: '#CF4520', tension: .3 }] },
+    options: { scales: { y: { ticks: { callback: v => v + '%' } } } } });
+  // tabla por ingeniero: mismo período año contra año
+  const ings = [...new Set(rendDatos.filas.map(f => f.ing))].sort();
+  const filas = ings.map(i => ({ i, a: rendSuma(i, A, mes), b: rendSuma(i, B, mes) })).filter(x => x.a.estudiados || x.b.estudiados);
+  const tot = { i: 'EMPRESA', a: rendSuma('', A, mes), b: rendSuma('', B, mes) };
+  const fila = (x, neg) => '<tr' + (neg ? ' style="font-weight:700;background:#FDE3D8"' : '') + '><td>' + escA(x.i) + '</td><td style="text-align:right">' + x.a.estudiados + ' → ' + x.b.estudiados + '</td><td style="text-align:right">' + fmtM(x.a.cotizado) + ' → ' + fmtM(x.b.cotizado) + '</td><td style="text-align:right">' + x.a.adjN + ' → ' + x.b.adjN + '</td><td style="text-align:right">' + fmtM(x.a.adjMonto) + ' → ' + fmtM(x.b.adjMonto) + '</td><td>' + delta(x.a.adjMonto, x.b.adjMonto) + '</td><td style="text-align:right">' + pct(x.a.efN) + ' → ' + pct(x.b.efN) + '</td><td>' + delta(x.a.efN, x.b.efN, 1) + '</td></tr>';
+  document.getElementById('rendTabla').innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Ingeniero</th><th>Estudiados ' + A + ' → ' + B + '</th><th>Cotizado</th><th>Adjudicados</th><th>Monto adjudicado</th><th>Variación $</th><th>Efectividad n.º</th><th>Variación</th></tr></thead><tbody>' + filas.map(x => fila(x)).join('') + fila(tot, 1) + '</tbody></table></div>';
+  // mapa de calor: monto adjudicado por ingeniero y mes del año B
+  const max = Math.max(1, ...ings.flatMap(i => MESES_R.map((_, m) => rendSuma(i, B, m + 1).adjMonto)));
+  document.getElementById('rendCalor').innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Ingeniero · ' + B + '</th>' + MESES_R.map(m => '<th style="text-align:right">' + m + '</th>').join('') + '<th style="text-align:right">Total</th></tr></thead><tbody>' +
+    ings.map(i => { const v = MESES_R.map((_, m) => rendSuma(i, B, m + 1).adjMonto); if (!v.some(Boolean)) return '';
+      return '<tr><td>' + escA(i) + '</td>' + v.map(x => '<td style="text-align:right;background:rgba(207,69,32,' + (x / max * 0.75).toFixed(2) + ');color:' + (x / max > .5 ? '#fff' : '#1F2937') + '">' + (x ? fmtM(x) : '') + '</td>').join('') + '<td style="text-align:right;font-weight:700">' + fmtM(v.reduce((s, x) => s + x, 0)) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  // anual: costo vs utilidad
+  const an = rendDatos.anual;
+  const lin = [...new Set(Object.keys(an).map(k => k.split('|')[0]))].sort();
+  document.getElementById('rendAnual').innerHTML = '<table><thead><tr><th>Ingeniero</th><th style="text-align:right">Costo ' + A + '</th><th style="text-align:right">Utilidad ' + A + '</th><th style="text-align:right">Costo ' + B + '</th><th style="text-align:right">Utilidad ' + B + '</th><th style="text-align:right">Utilidad / costo ' + B + '</th></tr></thead><tbody>' +
+    lin.map(i => { const x = an[i + '|' + A] || { costo: 0, utilidad: 0 }, y = an[i + '|' + B] || { costo: 0, utilidad: 0 };
+      return '<tr><td>' + escA(i) + '</td><td style="text-align:right">' + fmtM(x.costo) + '</td><td style="text-align:right">' + fmtM(x.utilidad) + '</td><td style="text-align:right">' + fmtM(y.costo) + '</td><td style="text-align:right">' + fmtM(y.utilidad) + '</td><td style="text-align:right;font-weight:700;color:' + (y.costo && y.utilidad / y.costo >= 1 ? '#15803D' : '#B91C1C') + '">' + (y.costo ? (y.utilidad / y.costo).toFixed(2) + 'x' : '—') + '</td></tr>'; }).join('') + '</tbody></table><p style="font-size:11px;color:#6B7280">Costo y utilidad: hojas _COSTO_ING y _UTILIDAD_ING del flujo (utilidad asignada por asistencia). Años sin datos aparecen en 0.</p>';
+}
+['rendAnoA', 'rendAnoB', 'rendMes', 'rendIng'].forEach(id => document.getElementById(id).addEventListener('change', dibujarRendimiento));
+
+/* ---------------- Accesos a Administración (26-11-2026) ---------------- */
+async function cargarAccesosUI() {
+  const r = await callAdmin('listarAccesosAdmin', {});
+  if (!r.ok) { document.getElementById('accLista').innerHTML = '<span style="color:#B91C1C">' + escA(r.error) + '</span>'; return; }
+  document.getElementById('accForm').style.display = r.puedeEditar ? 'flex' : 'none';
+  document.getElementById('accLista').innerHTML = '<table><thead><tr><th>Correo con acceso</th><th></th></tr></thead><tbody>' + r.correos.map(c => '<tr><td>' + escA(c) + (c === r.dueno ? ' <span class="badge" style="background:#FDE3D8;color:#CF4520">dueño</span>' : '') + '</td><td>' + (r.puedeEditar && c !== r.dueno ? '<button class="secondary" style="width:auto;margin:0" onclick="quitarAccesoUI(\'' + escA(c) + '\')">Quitar</button>' : '') + '</td></tr>').join('') + '</tbody></table>';
+  window._accesos = r.correos;
+}
+async function guardarAccesosUI(lista) {
+  const r = await callAdmin('guardarAccesosAdmin', { correos: lista });
+  if (!r.ok) { toast(r.error); return; }
+  toast('Accesos actualizados.'); cargarAccesosUI();
+}
+function agregarAccesoUI() { const c = document.getElementById('accNuevo').value.trim(); if (!c) return; document.getElementById('accNuevo').value = ''; guardarAccesosUI((window._accesos || []).concat([c])); }
+function quitarAccesoUI(c) { if (!confirm('¿Quitar el acceso a Administración de ' + c + '?')) return; guardarAccesosUI((window._accesos || []).filter(x => x !== c)); }
+
+document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => {
+  const v = btn.dataset.view;
+  if (v === 'admrend') cargarRendimiento();
+  if (v === 'admaccesos') cargarAccesosUI();
+  document.querySelector('header h1').innerHTML = btn.dataset.modulo === 'Administración' ? 'SENER<b>COM</b> · Administración' : 'SENER<b>COM</b> · Compras';
+}));
 
 /* ---------------- Usuarios y permisos (25-11-2026) ---------------- */
 async function cargarUsuariosUI() {
