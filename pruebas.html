@@ -125,6 +125,7 @@
       <button class="tab" data-view="admpagos" data-modulo="Administración">Pagos por definir</button>
       <button class="tab" data-view="admresumen" data-modulo="Administración">Resumen de pagos</button>
       <button class="tab" data-view="admrend" data-modulo="Administración">Rendimiento ingenieros</button>
+      <button class="tab" data-view="admcentros" data-modulo="Administración">Centros de costo</button>
       <button class="tab" data-view="admcreditos" data-modulo="Administración">Créditos y tarjetas</button>
       <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="oc">Reporte de OC</button>
       <button class="tab" data-view="admpend" data-modulo="Administración" data-pend="conc">Conciliación bancaria</button>
@@ -521,6 +522,23 @@
         </details>
       </div>
       <div id="rpSalida"></div>
+    </section>
+
+    <section id="view-admcentros" class="view hidden">
+      <div class="card">
+        <p style="font-size:12px;color:#6B7280;margin:0 0 8px">Cuando un presupuesto pasa a <b>Adjudicado</b> en el flujo (hoja «Centros de Costos»), el sistema calcula su centro de Defontana (código sin guiones + «0») y los niveles que faltan. Cada mañana avisa por correo si aparece uno nuevo. Las obras anteriores quedaron como «Anterior» (no se crean). Nada se crea solo en Defontana.</p>
+        <div id="ccResumen" style="margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><label style="margin:0">Mostrar</label>
+          <select id="ccFiltro" style="width:auto"><option>Por crear</option><option>Creado</option><option>Existe</option><option>Anterior</option><option>No crear</option><option value="todos">Todos</option></select>
+          <button class="secondary" style="width:auto;margin:0" onclick="cargarCentrosUI()">Revisar el flujo ahora</button></div>
+        <div id="ccLista"></div>
+        <details style="margin-top:12px"><summary style="cursor:pointer;color:#CF4520;font-weight:600">Cómo crearlo en Defontana</summary>
+          <ol style="font-size:12px"><li>Defontana → Configuración → Centro de Negocios → <b>Nuevo</b>.</li><li>Crea los niveles que faltan <b>en orden</b>: cliente (3 dígitos), presupuesto (6), obra/año (9) e imputable (termina en 0).</li><li>Descripción: el nombre del presupuesto. Solo el último nivel va como <b>Imputable = Sí</b>. Activo = Sí.</li><li>Vuelve aquí y presiona <b>Creado</b>.</li></ol></details>
+        <details style="margin-top:6px"><summary style="cursor:pointer;color:#CF4520;font-weight:600">Actualizar la lista de centros de Defontana (mensual)</summary>
+          <p style="font-size:12px;color:#6B7280">Defontana → Configuración → Centro de Negocios → Exportar. Copia la columna «ID Negocio» y pégala aquí.</p>
+          <textarea id="ccPegar" rows="4" placeholder="001&#10;001001&#10;…"></textarea>
+          <button class="primary" style="width:auto" onclick="actualizarCentrosDFUI(this)">Actualizar lista</button></details>
+      </div>
     </section>
 
     <section id="view-admaccesos" class="view hidden">
@@ -2530,6 +2548,48 @@ function imprimirResumen() {
   w.document.close(); setTimeout(() => w.print(), 500);
 }
 document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => { if (btn.dataset.view === 'admresumen') iniciarResumenPagos(); }));
+
+/* ---------------- Centros de costo automáticos (26-11-2026) ----------------
+   Lee los adjudicados del flujo (solo lectura) y muestra los centros que faltan en Defontana. */
+let admCentros = null;
+async function cargarCentrosUI() {
+  document.getElementById('ccLista').innerHTML = 'Revisando el flujo…';
+  const r = await callAdmin('listarCentros', {});
+  if (!r.ok) { document.getElementById('ccLista').innerHTML = '<span style="color:#B91C1C">' + escA(r.error) + '</span>'; return; }
+  admCentros = r; dibujarCentros();
+}
+function dibujarCentros() {
+  const r = admCentros, filtro = document.getElementById('ccFiltro').value;
+  const cuenta = e => r.centros.filter(c => c['Estado Centro'] === e).length;
+  document.getElementById('ccResumen').innerHTML = ['Por crear', 'Creado', 'Existe', 'Anterior', 'No crear'].map(e =>
+    '<span class="badge" style="margin-right:6px;background:' + ({ 'Por crear': '#FEE2E2;color:#B91C1C', 'Creado': '#DCFCE7;color:#15803D', 'Existe': '#E5E7EB;color:#4B5563' }[e] || '#FEF3C7;color:#B45309') + '">' + e + ': ' + cuenta(e) + '</span>').join('') +
+    '<span style="font-size:11px;color:#6B7280">Centros en Defontana: ' + r.totalDefontana + ' (lista del ' + escA(r.actualizadoDF) + ')' + (r.nuevos ? ' · <b style="color:#B91C1C">' + r.nuevos + ' nuevo(s) detectado(s) ahora</b>' : '') + '</span>';
+  const lista = r.centros.filter(c => filtro === 'todos' || c['Estado Centro'] === filtro);
+  admCentros._vista = lista;
+  if (!lista.length) { document.getElementById('ccLista').innerHTML = '<p style="font-size:12px;color:#6B7280">No hay centros en este estado.</p>'; return; }
+  document.getElementById('ccLista').innerHTML = '<div style="overflow-x:auto"><table><thead><tr><th>Presupuesto</th><th>Nombre</th><th>Cliente</th><th>Código Defontana</th><th>Niveles que faltan (crear en este orden)</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    lista.map((c, i) => '<tr><td>' + escA(c['Codigo Presupuesto']) + '<div style="font-size:10px;color:#6B7280">' + escA(c['Responsable']) + ' · ' + escA(c['Estado Presupuesto']) + '</div></td><td>' + escA(c['Nombre']) + '</td><td>' + escA(c['Cliente']) + '</td><td><b>' + escA(c['Codigo Defontana']) + '</b></td><td>' + escA(c['Niveles Faltantes'] || '—') + '</td><td>' + escA(c['Estado Centro']) + (c['Actualizado Por'] ? '<div style="font-size:10px;color:#6B7280">' + escA(c['Actualizado Por']) + '</div>' : '') + '</td><td style="white-space:nowrap">' +
+      (c['Estado Centro'] !== 'Creado' && c['Estado Centro'] !== 'Existe' ? '<button class="primary" style="width:auto;margin:0 4px 0 0;padding:4px 10px" onclick="marcarCentroUI(' + i + ',\'Creado\')">Creado</button>' : '') +
+      (c['Estado Centro'] === 'Por crear' ? '<button class="secondary" style="width:auto;margin:0" onclick="marcarCentroUI(' + i + ',\'No crear\')">No crear</button>' : '') +
+      (c['Estado Centro'] === 'Anterior' || c['Estado Centro'] === 'No crear' ? '<button class="secondary" style="width:auto;margin:0" onclick="marcarCentroUI(' + i + ',\'Por crear\')">Crear</button>' : '') + '</td></tr>').join('') + '</tbody></table></div>';
+}
+async function marcarCentroUI(i, estado) {
+  const c = admCentros._vista[i];
+  if (estado === 'Creado' && !confirm('¿Confirmas que ' + c['Codigo Defontana'] + ' (y sus niveles) ya está creado en Defontana?')) return;
+  const r = await callAdmin('marcarCentro', { codigoPresupuesto: c['Codigo Presupuesto'], estado });
+  if (!r.ok) { toast(r.error); return; }
+  toast('Centro marcado: ' + estado + '.'); cargarCentrosUI();
+}
+async function actualizarCentrosDFUI(btn) {
+  btn.disabled = true;
+  try {
+    const r = await callAdmin('actualizarCentrosDefontana', { codigos: document.getElementById('ccPegar').value });
+    if (!r.ok) { toast(r.error); return; }
+    document.getElementById('ccPegar').value = ''; toast('Lista de Defontana actualizada: ' + r.total + ' centros.'); cargarCentrosUI();
+  } finally { btn.disabled = false; }
+}
+document.getElementById('ccFiltro').addEventListener('change', dibujarCentros);
+document.querySelectorAll('nav .tab').forEach(btn => btn.addEventListener('click', () => { if (btn.dataset.view === 'admcentros') cargarCentrosUI(); }));
 
 /* ---------------- Usuarios y permisos (25-11-2026) ---------------- */
 async function cargarUsuariosUI() {
